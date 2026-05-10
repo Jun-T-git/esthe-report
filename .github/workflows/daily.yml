@@ -2,8 +2,8 @@ name: 日次データ収集・集計
 
 on:
   schedule:
-    # 毎日6時（JST）= UTC 21時（前日）
-    - cron: "0 21 * * *"
+    # 毎日8時（JST）= UTC 23時（前日）
+    - cron: "0 23 * * *"
   workflow_dispatch:  # 手動実行用
 
 jobs:
