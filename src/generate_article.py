@@ -254,10 +254,11 @@ def _build_context(target_saturday: date = None) -> dict:
 
 
 def _header(ctx: dict) -> list:
+    snap_date = ctx["this_week_snap"]["collected_at"][:10]
     return [
         f"# {ctx['title']}",
         "",
-        f"> **集計基準日**：{ctx['yesterday'].isoformat()}（前日までの予約を反映）  ",
+        f"> **集計基準日**：{snap_date}（前日までの予約を反映）  ",
         f"> **分析期間**：{ctx['this_week_snap']['period_start']} 〜 {ctx['this_week_snap']['period_end']}  ",
         f"> **分析スタッフ数**：{len(ctx['active'])}名　蓄積データ：{ctx['snap_count']}週分",
         "",
@@ -590,8 +591,8 @@ def generate_paid(ctx: dict) -> str:
 
 if __name__ == "__main__":
     today = date.today()
-    days_until_sat = (5 - today.weekday()) % 7
-    target = today if days_until_sat == 0 else today + timedelta(days=days_until_sat)
+    days_since_sat = (today.weekday() - 5) % 7
+    target = today - timedelta(days=days_since_sat)  # 直近の土曜日
 
     ctx = _build_context(target_saturday=target)
     if ctx is None:
