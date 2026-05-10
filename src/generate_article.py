@@ -14,7 +14,7 @@ from pathlib import Path
 from db import get_conn
 from score import score_snapshot
 
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = BASE_DIR / "output"
 

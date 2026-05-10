@@ -21,18 +21,18 @@ log "===== 開始 ====="
 
 # ── 毎日実行 ──────────────────────────────────────
 log "1. 生データ収集"
-python3 collect.py >> "$LOG" 2>&1
+python3 src/collect.py >> "$LOG" 2>&1
 
 log "2. 日別集計"
-python3 aggregate.py --mode=daily >> "$LOG" 2>&1
+python3 src/aggregate.py --mode=daily >> "$LOG" 2>&1
 
 # ── 土曜のみ実行 ──────────────────────────────────
 if [ "$(date +%u)" = "6" ]; then
     log "3. 週別集計（土曜）"
-    python3 aggregate.py --mode=weekly >> "$LOG" 2>&1
+    python3 src/aggregate.py --mode=weekly >> "$LOG" 2>&1
 
     log "4. 記事下書き生成"
-    python3 generate_article.py >> "$LOG" 2>&1
+    python3 src/generate_article.py >> "$LOG" 2>&1
 
     log "===== 完了（土曜フル実行）======"
 else

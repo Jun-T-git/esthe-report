@@ -13,7 +13,7 @@
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "aroma_more.db"
+DB_PATH = Path(__file__).parent.parent / "aroma_more.db"
 
 
 def get_conn() -> sqlite3.Connection:
