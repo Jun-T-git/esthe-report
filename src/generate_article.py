@@ -163,88 +163,85 @@ def _make_title(active: list, snap_count: int, month_week: str, monday: date = N
 
 
 # ====================================================================
-# メイン生成
+# 共通データ準備
 # ====================================================================
-def generate(target_saturday: date = None) -> str:
+def _build_context(target_saturday: date = None) -> dict:
+    """無料・有料記事の両方が使うデータをまとめて返す"""
     today = target_saturday or date.today()
     assert today.weekday() == 5 or target_saturday is not None, \
         "土曜日以外での実行は target_saturday を明示してください"
 
-    # 日付計算
-    yesterday = today - timedelta(days=1)          # 金曜（今週確定データ基準日）
-    week_start = today - timedelta(days=6)          # 日曜（今週の始まり）
-    next_mon = today + timedelta(days=2)            # 来週月曜
-    next_sun = today + timedelta(days=8)            # 来週日曜
+    yesterday = today - timedelta(days=1)
+    next_mon = today + timedelta(days=2)
+    next_sun = today + timedelta(days=8)
+    monday = today + timedelta(days=2)
 
-    # スナップショット取得（前日が理想、なければ当日まで許容）
     this_week_snap = find_snapshot_before(yesterday) or find_snapshot_before(today)
     next_week_snap = find_latest_snapshot()
     snap_count = count_snapshots()
 
     if not this_week_snap:
-        return "データが不足しています。collect.py を実行してください。"
+        return None
 
-    # スコアリング
     scored = score_snapshot(this_week_snap["id"])
     active = [s for s in scored if s["sellout_rate"] > 0]
     if not active:
-        return "有効なスタッフデータがありません。"
+        return None
 
-    reviews_by_staff = load_reviews()
+    third = len(active) // 3
+    bargains = sorted(active[third: third * 2], key=lambda x: x["working_days"])[:3]
 
-    # 4週間トレンド
-    trend_weeks = build_trend_table(today)
-
-    # 来週先行予約
     next_week_preview = []
     if next_week_snap:
-        next_week_preview = get_next_week_preview(
-            next_week_snap["id"], next_mon, next_sun)
+        next_week_preview = get_next_week_preview(next_week_snap["id"], next_mon, next_sun)
 
-    # 穴場スタッフ（中位×出勤少なめ）
-    third = len(active) // 3
-    bargains = sorted(active[third: third * 2],
-                      key=lambda x: x["working_days"])[:3]
+    return {
+        "today": today,
+        "yesterday": yesterday,
+        "monday": monday,
+        "this_week_snap": this_week_snap,
+        "snap_count": snap_count,
+        "active": active,
+        "reviews_by_staff": load_reviews(),
+        "trend_weeks": build_trend_table(today),
+        "next_week_preview": next_week_preview,
+        "bargains": bargains,
+        "title": _make_title(active, snap_count, _month_week_label(today), monday=monday),
+    }
 
-    # ====================================================================
-    # 記事本文
-    # ====================================================================
-    lines = []
-    week_label = f"第{snap_count}週" if snap_count > 1 else "初回"
-    pub_date = today.strftime("%Y年%-m月%-d日")
-    month_week = _month_week_label(today)
-    # 土曜投稿 → 翌週月曜（+2日）が分析対象週の開始日
-    monday = today + timedelta(days=2)
 
-    title = _make_title(active, snap_count, month_week, monday=monday)
-
-    # ── ヘッダー ──────────────────────────────────────────
-    lines += [
-        f"# {title}",
+def _header(ctx: dict) -> list[str]:
+    """タイトル＋メタ情報（無料・有料共通）"""
+    return [
+        f"# {ctx['title']}",
         "",
-        f"> **集計基準日**：{yesterday.isoformat()}（前日までの予約を反映）  ",
-        f"> **分析期間**：{this_week_snap['period_start']} 〜 {this_week_snap['period_end']}  ",
-        f"> **分析スタッフ数**：{len(active)}名　蓄積データ：{snap_count}週分",
+        f"> **集計基準日**：{ctx['yesterday'].isoformat()}（前日までの予約を反映）  ",
+        f"> **分析期間**：{ctx['this_week_snap']['period_start']} 〜 {ctx['this_week_snap']['period_end']}  ",
+        f"> **分析スタッフ数**：{len(ctx['active'])}名　蓄積データ：{ctx['snap_count']}週分",
         "",
         "---",
         "",
     ]
 
-    # ── 無料パート ──────────────────────────────────────
+
+# ====================================================================
+# 無料記事
+# ====================================================================
+def generate_free(ctx: dict) -> str:
+    active = ctx["active"]
+    lines = _header(ctx)
+
     lines += [
-        "## 🔓 無料パート",
+        f"今週は**{len(active)}名**のセラピストを独自スコアでランキングしました。",
+        "スコアは「完売率・出勤頻度・予約数・週次トレンド」の4指標を加重合成しています。",
         "",
-        f"今週は**{len(active)}名**を独自スコアでランキングしました。",
-        "スコアは「完売率・出勤頻度・予約数・週次トレンド」の4指標を加重合成したものです。",
+        f"今週の1位は完売率 **{active[0]['sellout_rate']:.1f}%**、スコア **{active[0]['score']:.1f}**。",
+        f"{len(active)}名中 **{sum(1 for s in active if s['sellout_rate'] >= 50)}名**が完売率50%超えでした。",
         "",
-        f"今週の1位は完売率 **{active[0]['sellout_rate']:.1f}%**、",
-        f"スコア **{active[0]['score']:.1f}**でした。",
-        f"（{len(active)}名中{sum(1 for s in active if s['sellout_rate'] >= 50)}名が完売率50%超え）",
+        "## 参考公開：11〜15位",
         "",
-        "### 参考公開：11〜15位",
-        "",
-        "トップ10・16位以降は有料パートに掲載しています。",
-        "「自分が気になっているあの人が何位か」を確かめてください。",
+        "トップ10・16位以降は有料記事に掲載しています。",
+        "「気になっているあの人が何位か」を確かめてください。",
         "",
         "| 順位 | セラピスト | 完売率 | 今週の出勤 |",
         "|------|-----------|--------|-----------|",
@@ -256,17 +253,42 @@ def generate(target_saturday: date = None) -> str:
 
     lines += [
         "",
-        "> トップ10は予約が取りにくいスタッフ、16位以降には「穴場」が潜んでいます。",
-        "> 詳細は有料パートで。",
+        "> トップ10は予約が取りにくいスタッフ、16位以降には穴場が潜んでいます。",
         "",
         "---",
         "",
-    ]
-
-    # ── 有料パート ──────────────────────────────────────
-    lines += [
-        "## 🔒 有料パート",
+        "## 有料記事の内容",
         "",
+        "- 📊 全スタッフ スコアランキング（数値・シフト付き）",
+        "- 📈 過去4週間トレンド（急上昇・急落スタッフを特定）",
+        "- 🗓️ 来週の先行予約状況（今週末に動くべきスタッフ）",
+        "- 💎 穴場スタッフ（スコア中位×予約が取りやすい）",
+        "- 🔮 先週の予測検証（予測の的中率を公開）",
+        "",
+        f"👉 **[有料記事を読む]（リンクをここに貼る）**",
+        "",
+        "---",
+        "",
+        f"*集計基準日：{ctx['yesterday'].isoformat()}　本記事は公開情報をもとにした個人による分析です。*",
+    ]
+    return "\n".join(lines)
+
+
+# ====================================================================
+# 有料記事
+# ====================================================================
+def generate_paid(ctx: dict) -> str:
+    active = ctx["active"]
+    yesterday = ctx["yesterday"]
+    snap_count = ctx["snap_count"]
+    reviews_by_staff = ctx["reviews_by_staff"]
+    trend_weeks = ctx["trend_weeks"]
+    next_week_preview = ctx["next_week_preview"]
+    bargains = ctx["bargains"]
+
+    lines = _header(ctx)
+
+    lines += [
         "> **収録内容**",
         "> 1. 今週の全スタッフスコアランキング（数値・シフト付き）",
         "> 2. 過去4週間トレンド（誰が上昇中か・下降中か）",
@@ -364,6 +386,9 @@ def generate(target_saturday: date = None) -> str:
                 lines.append(f"- {name}　{diff:.1f}pt → スコア{score:.1f}")
             lines.append("")
 
+    next_mon = ctx["monday"]
+    next_sun = next_mon + timedelta(days=6)
+
     # 3. 来週先行予約
     lines += [
         "### 🗓️ 来週の先行予約状況",
@@ -442,18 +467,29 @@ def generate(target_saturday: date = None) -> str:
 
 
 if __name__ == "__main__":
-    # 土曜日以外でもテスト実行できるよう target_saturday を明示
     today = date.today()
-    # 直近土曜を求める（今日が土曜ならそのまま、そうでなければ次の土曜）
     days_until_sat = (5 - today.weekday()) % 7
     target = today if days_until_sat == 0 else today + timedelta(days=days_until_sat)
 
-    article = generate(target_saturday=target)
+    ctx = _build_context(target_saturday=target)
+    if ctx is None:
+        print("データが不足しています。collect.py を先に実行してください。")
+        exit(1)
+
     OUTPUT_DIR.mkdir(exist_ok=True)
-    out = OUTPUT_DIR / "article_draft.md"
-    with open(out, "w", encoding="utf-8") as f:
-        f.write(article)
-    print(f"生成完了: {out}")
-    print("\n--- プレビュー（先頭70行）---")
-    for line in article.split("\n")[:70]:
+
+    free = generate_free(ctx)
+    paid = generate_paid(ctx)
+
+    out_free = OUTPUT_DIR / "article_free.md"
+    out_paid = OUTPUT_DIR / "article_paid.md"
+
+    out_free.write_text(free, encoding="utf-8")
+    out_paid.write_text(paid, encoding="utf-8")
+
+    print(f"生成完了:")
+    print(f"  無料記事 → {out_free}")
+    print(f"  有料記事 → {out_paid}")
+    print("\n--- 無料記事プレビュー ---")
+    for line in free.split("\n")[:30]:
         print(line)
