@@ -604,8 +604,10 @@ if __name__ == "__main__":
     free = generate_free(ctx)
     paid = generate_paid(ctx)
 
-    out_free = OUTPUT_DIR / "article_free.md"
-    out_paid = OUTPUT_DIR / "article_paid.md"
+    # ファイル名に記事対象週（次の月曜）の日付を含める
+    date_tag = ctx["monday"].strftime("%Y%m%d")
+    out_free = OUTPUT_DIR / f"article_free_{date_tag}.md"
+    out_paid = OUTPUT_DIR / f"article_paid_{date_tag}.md"
 
     out_free.write_text(free, encoding="utf-8")
     out_paid.write_text(paid, encoding="utf-8")
