@@ -1,0 +1,48 @@
+name: 日次データ収集・集計
+
+on:
+  schedule:
+    # 毎日6時（JST）= UTC 21時（前日）
+    - cron: "0 21 * * *"
+  workflow_dispatch:  # 手動実行用
+
+jobs:
+  collect-and-aggregate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # DBをcommit & pushするために必要
+
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+        with:
+          # DBの最新状態を取得するためfetch-depth=1で十分
+          fetch-depth: 1
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 生データ収集
+        run: python collect.py
+
+      - name: 日別集計
+        run: python aggregate.py --mode=daily
+
+      - name: 週別集計＋記事生成（土曜のみ）
+        # ubuntu の date コマンドで曜日を取得（6=土曜）
+        run: |
+          if [ "$(date -u +%u)" = "6" ]; then
+            python aggregate.py --mode=weekly
+            python generate_article.py
+          fi
+
+      - name: DB・記事をコミット
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add aroma_more.db output/
+          # 変更がなければ何もしない
+          git diff --cached --quiet || git commit -m "chore: daily snapshot $(date -u +%Y-%m-%d)"
+          git push

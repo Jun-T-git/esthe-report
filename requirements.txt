@@ -1,0 +1,2 @@
+# 標準ライブラリのみ使用しているため依存パッケージなし
+# urllib, json, sqlite3, datetime はすべてPython標準ライブラリ
