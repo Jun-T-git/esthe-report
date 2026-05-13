@@ -52,54 +52,76 @@ def pick_review(reviews):
 
 
 # ====================================================================
-# スナップショット検索
+# 週次スナップショット検索（weekly_summaries ベース）
+#
+# 新スキーマでは「スナップショット」= (week_start, reference_date) のペア。
+# 旧スキーマ呼び出し側との互換のため dict として返す。
 # ====================================================================
+def _snap_dict(row) -> dict:
+    return {
+        "week_start": row["week_start"],
+        "week_end": row["week_end"],
+        "reference_date": row["reference_date"],
+        # 旧コード互換用エイリアス
+        "collected_at": row["reference_date"],
+        "period_start": row["week_start"],
+        "period_end": row["week_end"],
+    }
+
+
 def find_snapshot_before(target_date: date):
+    """target_date 以前で最新の週次サマリを返す（reference_date と week_start の両方が target_date 以下）"""
     conn = get_conn()
     row = conn.execute("""
-        SELECT id, collected_at, period_start, period_end
-        FROM snapshots
-        WHERE date(collected_at) <= ?
-        ORDER BY collected_at DESC LIMIT 1
-    """, (target_date.isoformat(),)).fetchone()
+        SELECT week_start, week_end, reference_date
+        FROM weekly_summaries
+        WHERE reference_date <= ?
+          AND week_start <= ?
+        ORDER BY week_start DESC, reference_date DESC
+        LIMIT 1
+    """, (target_date.isoformat(), target_date.isoformat())).fetchone()
     conn.close()
-    return row
+    return _snap_dict(row) if row else None
 
 
 def find_latest_snapshot():
+    """最新の週次サマリを返す（next_week_preview の参照日に使う）"""
     conn = get_conn()
     row = conn.execute("""
-        SELECT id, collected_at, period_start, period_end
-        FROM snapshots ORDER BY collected_at DESC LIMIT 1
+        SELECT week_start, week_end, reference_date
+        FROM weekly_summaries
+        ORDER BY reference_date DESC, week_start DESC
+        LIMIT 1
     """).fetchone()
     conn.close()
-    return row
+    return _snap_dict(row) if row else None
 
 
 def count_snapshots():
     conn = get_conn()
-    n = conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0]
+    n = conn.execute(
+        "SELECT COUNT(DISTINCT week_start) FROM weekly_summaries"
+    ).fetchone()[0]
     conn.close()
     return n
 
 
 # ====================================================================
-# 来週の先行予約データ
+# 来週の先行予約データ（daily_aggregates から直接集計）
 # ====================================================================
-def get_next_week_preview(snap_id: int, next_mon: date, next_sun: date) -> list:
+def get_next_week_preview(reference_date: str, next_mon: date, next_sun: date) -> list:
     conn = get_conn()
     rows = conn.execute("""
-        SELECT ss.staff_name, ss.staff_no,
-               SUM(ds.booked) as booked,
-               SUM(ds.capacity) as capacity
-        FROM daily_stats ds
-        JOIN staff_stats ss ON ds.staff_stat_id = ss.id
-        WHERE ss.snapshot_id = ?
-          AND ds.date BETWEEN ? AND ?
-        GROUP BY ss.staff_no, ss.staff_name
+        SELECT staff_no, staff_name,
+               SUM(booked) AS booked,
+               SUM(total_slots - unavailable) AS capacity
+        FROM daily_aggregates
+        WHERE reference_date = ?
+          AND target_date BETWEEN ? AND ?
+        GROUP BY staff_no, staff_name
         HAVING booked > 0
         ORDER BY booked DESC
-    """, (snap_id, next_mon.isoformat(), next_sun.isoformat())).fetchall()
+    """, (reference_date, next_mon.isoformat(), next_sun.isoformat())).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -107,20 +129,33 @@ def get_next_week_preview(snap_id: int, next_mon: date, next_sun: date) -> list:
 # ====================================================================
 # 4週間トレンド
 # ====================================================================
-def build_trend_table(today: date) -> list:
+def build_trend_table(target_date: date, n_weeks: int = 4) -> list:
+    """target_date 以前の直近 n_weeks 個の週について、各 week_start で最新の reference_date を採用してスコアマップを返す"""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT week_start, MAX(reference_date) AS reference_date
+        FROM weekly_summaries
+        WHERE week_start <= ?
+        GROUP BY week_start
+        ORDER BY week_start DESC
+        LIMIT ?
+    """, (target_date.isoformat(), n_weeks)).fetchall()
+    conn.close()
+
     weeks = []
-    for w in range(4):
-        days_to_friday = (today.weekday() + 1) % 7 + 1
-        friday = today - timedelta(days=days_to_friday + 7 * w)
-        snap = find_snapshot_before(friday)
-        if snap:
-            scored = score_snapshot(snap["id"])
-            rank_map = {s["staff_name"]: (i + 1, s["score"], s["sellout_rate"])
-                        for i, s in enumerate(scored)}
-            weeks.append({"friday": friday.isoformat(), "snap_id": snap["id"],
-                          "ranks": rank_map})
-        else:
-            weeks.append({"friday": friday.isoformat(), "snap_id": None, "ranks": {}})
+    for r in rows:
+        scored = score_snapshot(r["week_start"], r["reference_date"])
+        rank_map = {s["staff_name"]: (i + 1, s["score"], s["sellout_rate"])
+                    for i, s in enumerate(scored)}
+        # 表示用に各週の金曜日を擬似ラベルとして使う
+        friday = (date.fromisoformat(r["week_start"]) + timedelta(days=4)).isoformat()
+        weeks.append({
+            "friday": friday,
+            "snap_id": f"{r['week_start']}_{r['reference_date']}",
+            "ranks": rank_map,
+        })
+    while len(weeks) < n_weeks:
+        weeks.append({"friday": "", "snap_id": None, "ranks": {}})
     return weeks
 
 
@@ -145,28 +180,38 @@ def trend_arrow(scores: list) -> str:
 # 月間ランキング
 # ====================================================================
 def get_monthly_scores(n_weeks: int = 4) -> list:
-    """過去n週のスナップショットからスタッフごとの平均スコアを返す"""
+    """過去n週のweekly_summariesからスタッフごとの平均スコアを返す（各週は最新reference_dateを採用）"""
     conn = get_conn()
-    snaps = conn.execute(
-        "SELECT id FROM snapshots ORDER BY id DESC LIMIT ?", (n_weeks,)
-    ).fetchall()
-    snap_ids = [s["id"] for s in snaps]
-    if not snap_ids:
+    week_rows = conn.execute("""
+        SELECT week_start, MAX(reference_date) AS reference_date
+        FROM weekly_summaries
+        GROUP BY week_start
+        ORDER BY week_start DESC
+        LIMIT ?
+    """, (n_weeks,)).fetchall()
+    if not week_rows:
         conn.close()
         return []
 
-    placeholders = ",".join("?" * len(snap_ids))
+    conditions = " OR ".join(
+        "(week_start = ? AND reference_date = ?)" for _ in week_rows
+    )
+    params = []
+    for r in week_rows:
+        params.extend([r["week_start"], r["reference_date"]])
+
     rows = conn.execute(f"""
         SELECT staff_no, staff_name,
-               AVG(sellout_rate)  AS avg_sellout,
-               SUM(booked_slots)  AS total_booked,
-               COUNT(*)           AS weeks_appeared
-        FROM staff_stats
-        WHERE snapshot_id IN ({placeholders})
+               AVG(sellout_rate)   AS avg_sellout,
+               SUM(total_booked)   AS total_booked,
+               SUM(total_capacity) AS total_capacity,
+               COUNT(*)            AS weeks_appeared
+        FROM weekly_summaries
+        WHERE {conditions}
         GROUP BY staff_no, staff_name
         HAVING total_booked > 0
         ORDER BY avg_sellout DESC
-    """, snap_ids).fetchall()
+    """, params).fetchall()
     conn.close()
 
     max_booked = max((r["total_booked"] for r in rows), default=1) or 1
@@ -181,12 +226,71 @@ def get_monthly_scores(n_weeks: int = 4) -> list:
         result.append({
             "staff_name": r["staff_name"],
             "avg_sellout": round(r["avg_sellout"], 1),
-            "total_booked": r["total_booked"],
+            "total_booked": r["total_booked"],         # 月間合計完売数
+            "total_capacity": r["total_capacity"],     # 月間合計予約可能枠数
             "weeks_appeared": r["weeks_appeared"],
             "score": score,
         })
     result.sort(key=lambda x: x["score"], reverse=True)
     return result
+
+
+# ====================================================================
+# 予約アクション分析（各カテゴリ5名）
+# ====================================================================
+def get_action_insights(scored: list, week_start: str) -> dict:
+    """
+    3カテゴリの推奨スタッフを各5名抽出して返す:
+      1. hot_high     : 出勤多い × すぐ埋まる
+      2. hot_low      : 出勤少ない × すぐ埋まる
+      3. more_shifts  : 今週はいつもより出勤が多い
+    """
+    HOT_RATE = 80.0  # 完売率これ以上を「すぐ埋まる」とみなす
+    INCREASE_RATIO = 1.3  # 過去平均比これ以上を「出勤増」とみなす
+
+    if not scored:
+        return {"hot_high": [], "hot_low": [], "more_shifts": []}
+
+    # 出勤日数の中央値で高/低出勤を分割
+    days_sorted = sorted(s["working_days"] for s in scored)
+    median_days = days_sorted[len(days_sorted) // 2]
+
+    hot_high = sorted(
+        [s for s in scored
+         if s["working_days"] >= median_days and s["sellout_rate"] >= HOT_RATE],
+        key=lambda s: (-s["sellout_rate"], -s["booked_slots"]),
+    )[:5]
+
+    hot_low = sorted(
+        [s for s in scored
+         if s["working_days"] < median_days and s["sellout_rate"] >= HOT_RATE],
+        key=lambda s: (-s["sellout_rate"], -s["booked_slots"]),
+    )[:5]
+
+    # 過去週平均 capacity を取得（各 week_start で最新 reference_date を採用）
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT staff_no, AVG(total_capacity) AS avg_cap
+        FROM weekly_summaries ws
+        WHERE week_start < ?
+          AND reference_date = (
+              SELECT MAX(reference_date) FROM weekly_summaries ws2
+              WHERE ws2.week_start = ws.week_start
+          )
+        GROUP BY staff_no
+        HAVING avg_cap > 0
+    """, (week_start,)).fetchall()
+    conn.close()
+    avg_caps = {r["staff_no"]: r["avg_cap"] for r in rows}
+
+    candidates = []
+    for s in scored:
+        avg = avg_caps.get(s["staff_no"])
+        if avg and s["capacity"] > avg * INCREASE_RATIO:
+            candidates.append((s, s["capacity"] - avg))
+    more_shifts = [s for s, _ in sorted(candidates, key=lambda x: -x[1])[:5]]
+
+    return {"hot_high": hot_high, "hot_low": hot_low, "more_shifts": more_shifts}
 
 
 # ====================================================================
@@ -205,24 +309,27 @@ def _make_title(active: list, snap_count: int, month_week: str, monday: date = N
 # ====================================================================
 # 共通データ準備
 # ====================================================================
-def _build_context(target_saturday: date = None) -> dict:
-    today = target_saturday or date.today()
-    assert today.weekday() == 5 or target_saturday is not None, \
-        "土曜日以外での実行は target_saturday を明示してください"
+def _build_context(target_date: date = None) -> dict:
+    """
+    target_date 時点で最新の週次サマリを使って記事コンテキストを構築。
+    対象週 = target_date 以前で最新の week_start（通常はその週の月曜）。
+    """
+    today = target_date or date.today()
 
-    yesterday = today - timedelta(days=1)
-    next_mon = today + timedelta(days=2)
-    next_sun = today + timedelta(days=8)
-    monday = today + timedelta(days=2)
-
-    this_week_snap = find_snapshot_before(yesterday) or find_snapshot_before(today)
-    next_week_snap = find_latest_snapshot()
-    snap_count = count_snapshots()
-
+    this_week_snap = find_snapshot_before(today)
     if not this_week_snap:
         return None
 
-    scored = score_snapshot(this_week_snap["id"])
+    week_start = date.fromisoformat(this_week_snap["week_start"])
+    week_end   = date.fromisoformat(this_week_snap["week_end"])
+    reference  = date.fromisoformat(this_week_snap["reference_date"])
+    next_mon   = week_start + timedelta(days=7)
+    next_sun   = week_start + timedelta(days=13)
+
+    next_week_snap = find_latest_snapshot()
+    snap_count = count_snapshots()
+
+    scored = score_snapshot(this_week_snap["week_start"], this_week_snap["reference_date"])
     active = [s for s in scored if s["sellout_rate"] > 0]
     if not active:
         return None
@@ -232,12 +339,15 @@ def _build_context(target_saturday: date = None) -> dict:
 
     next_week_preview = []
     if next_week_snap:
-        next_week_preview = get_next_week_preview(next_week_snap["id"], next_mon, next_sun)
+        next_week_preview = get_next_week_preview(
+            next_week_snap["reference_date"], next_mon, next_sun
+        )
 
     return {
         "today": today,
-        "yesterday": yesterday,
-        "monday": monday,
+        "yesterday": reference,       # 表示用: 基準日
+        "monday": week_start,         # 対象週の月曜
+        "week_end": week_end,
         "this_week_snap": this_week_snap,
         "snap_count": snap_count,
         "active": active,
@@ -249,18 +359,26 @@ def _build_context(target_saturday: date = None) -> dict:
         "trend_weeks":     build_trend_table(today),
         "next_week_preview": next_week_preview,
         "bargains":        bargains,
-        "title": _make_title(active, snap_count, _month_week_label(today), monday=monday),
+        "action_insights": get_action_insights(active, this_week_snap["week_start"]),
+        "title": _make_title(active, snap_count, _month_week_label(week_start), monday=week_start),
     }
 
 
 def _header(ctx: dict) -> list:
-    snap_date = ctx["this_week_snap"]["collected_at"][:10]
     return [
         f"# {ctx['title']}",
         "",
-        f"> **集計基準日**：{snap_date}（前日までの予約を反映）  ",
-        f"> **分析期間**：{ctx['this_week_snap']['period_start']} 〜 {ctx['this_week_snap']['period_end']}  ",
+        f"> **集計基準日**：{ctx['this_week_snap']['reference_date']}（基準日までの予約を反映）  ",
+        f"> **分析期間**：{ctx['this_week_snap']['week_start']} 〜 {ctx['this_week_snap']['week_end']}  ",
         f"> **分析スタッフ数**：{len(ctx['active'])}名　蓄積データ：{ctx['snap_count']}週分",
+        "",
+        "> ⚠️ **注意**：**完売数・完売率は基準日時点のスナップショット**から算出しています。",
+        "> 基準日より後に発生した予約（特に当日予約）は正確に反映されません。",
+        "",
+        "**用語の定義**",
+        "- **予約可能枠数**：そのスタッフが出勤している時間帯のスロット数（15分刻み）。",
+        "- **完売数**：上記のうち、基準日時点で予約が入っていた枠の数。",
+        "- **完売率**：完売数 ÷ 予約可能枠数 × 100。出勤枠のうち何%が埋まったかを示す。",
         "",
         "---",
         "",
@@ -285,62 +403,68 @@ def generate_free(ctx: dict) -> str:
 
     # 1. 週間完売数 TOP10
     lines += [
-        "## 📦 週間完売数ランキング TOP10",
+        "## 📦 週間完売数ランキング TOP15",
         "",
-        "今週、最も多くの予約枠が埋まったセラピストのランキングです。",
+        "基準日時点で最も多くの枠が予約済みになっているセラピストのランキングです。",
         "",
-        "| 順位 | セラピスト | 予約枠数 |",
-        "|------|-----------|---------|",
+        "| 順位 | セラピスト | 完売数 | 予約可能枠数 |",
+        "|------|-----------|-------|------------|",
     ]
-    for rank, s in enumerate(ctx["rank_by_booked"][:10], 1):
-        lines.append(f"| {rank}位 | {MASK} | {s['booked_slots']}枠 |")
-    lines += ["", "> 名前は有料記事で公開しています。", ""]
+    for rank, s in enumerate(ctx["rank_by_booked"][:15], 1):
+        lines.append(f"| {rank}位 | {MASK} | {s['booked_slots']}枠 | {s['capacity']}枠 |")
+    lines.append("| 16位以降 | … | … | … |")
+    lines += ["", "> 名前と16位以降の詳細は有料記事で公開しています。", ""]
 
-    # 2. 週間完売率 TOP10
+    # 2. 週間完売率 TOP15
     lines += [
         "---",
         "",
-        "## 📈 週間完売率ランキング TOP10",
+        "## 📈 週間完売率ランキング TOP15",
         "",
-        "出勤枠に対して何%が予約で埋まっているか。人気の「密度」を示すランキングです。",
+        "予約可能枠数に対して何%が完売しているか。人気の「密度」を示すランキングです。",
         "",
-        "| 順位 | セラピスト | 完売率 |",
-        "|------|-----------|--------|",
+        "| 順位 | セラピスト | 完売率 | 完売数 | 予約可能枠数 |",
+        "|------|-----------|--------|-------|------------|",
     ]
-    for rank, s in enumerate(ctx["rank_by_sellout"][:10], 1):
-        lines.append(f"| {rank}位 | {MASK} | {s['sellout_rate']:.1f}% |")
-    lines += ["", "> 名前は有料記事で公開しています。", ""]
+    for rank, s in enumerate(ctx["rank_by_sellout"][:15], 1):
+        lines.append(
+            f"| {rank}位 | {MASK} | {s['sellout_rate']:.1f}% "
+            f"| {s['booked_slots']}枠 | {s['capacity']}枠 |"
+        )
+    lines.append("| 16位以降 | … | … | … | … |")
+    lines += ["", "> 名前と16位以降の詳細は有料記事で公開しています。", ""]
 
-    # 3. 週間総合ランキング 1〜20位
+    # 3. 週間総合ランキング TOP15
     lines += [
         "---",
         "",
-        "## 🏆 週間総合ランキング",
+        "## 🏆 週間総合ランキング TOP15",
         "",
-        "完売率・出勤頻度・予約数・週次トレンドを加重合成した独自スコアによるランキングです。",
+        "完売率・出勤頻度・完売数・週次トレンドを加重合成した独自スコアによるランキングです。",
         "**11〜15位のみ全項目公開**、それ以外は名前をマスクしています。",
         "",
-        "| 順位 | セラピスト | 完売率 | スコア | 予約枠数 | 週次変化 |",
-        "|------|-----------|--------|--------|---------|---------|",
+        "| 順位 | セラピスト | スコア | 完売率 | 完売数 | 予約可能枠数 | 週次変化 |",
+        "|------|-----------|--------|--------|-------|------------|---------|",
     ]
-    for rank, s in enumerate(ctx["rank_by_score"][:20], 1):
+    for rank, s in enumerate(ctx["rank_by_score"][:15], 1):
         trend_str = f"+{s['trend']:.1f}pt" if s["trend"] >= 0 else f"{s['trend']:.1f}pt"
         if 11 <= rank <= 15:
             lines.append(
-                f"| **{rank}位** | **{s['staff_name']}** | {s['sellout_rate']:.1f}% "
-                f"| {s['score']:.1f} | {s['booked_slots']}枠 | {trend_str} |"
+                f"| **{rank}位** | **{s['staff_name']}** | {s['score']:.1f} "
+                f"| {s['sellout_rate']:.1f}% | {s['booked_slots']}枠 | {s['capacity']}枠 | {trend_str} |"
             )
         else:
             lines.append(
-                f"| {rank}位 | {MASK} | {s['sellout_rate']:.1f}% | {s['score']:.1f} | ― | ― |"
+                f"| {rank}位 | {MASK} | {s['score']:.1f} | {s['sellout_rate']:.1f}% | ― | ― | ― |"
             )
-    lines += ["", "> 21位以降・マスク部分の詳細は有料記事で公開しています。", ""]
+    lines.append("| 16位以降 | … | … | … | … | … | … |")
+    lines += ["", "> 16位以降・マスク部分の詳細は有料記事で公開しています。", ""]
 
-    # 4. 月間総合ランキング 1〜20位
+    # 4. 月間総合ランキング TOP15
     lines += [
         "---",
         "",
-        f"## 📅 月間総合ランキング（直近{min(snap_count, 4)}週）",
+        f"## 📅 月間総合ランキング TOP15（直近{min(snap_count, 4)}週）",
         "",
         "過去最大4週分を集計した月間ランキングです。継続して人気が高いセラピストを把握できます。",
         "",
@@ -352,7 +476,7 @@ def generate_free(ctx: dict) -> str:
             "| 順位 | セラピスト | 月間平均完売率 | 月間スコア |",
             "|------|-----------|-------------|-----------|",
         ]
-        for rank, s in enumerate(monthly[:20], 1):
+        for rank, s in enumerate(monthly[:15], 1):
             if 11 <= rank <= 15:
                 lines.append(
                     f"| **{rank}位** | **{s['staff_name']}** | {s['avg_sellout']:.1f}% | {s['score']:.1f} |"
@@ -361,7 +485,57 @@ def generate_free(ctx: dict) -> str:
                 lines.append(
                     f"| {rank}位 | {MASK} | {s['avg_sellout']:.1f}% | {s['score']:.1f} |"
                 )
-        lines += ["", "> 名前の詳細は有料記事で公開しています。", ""]
+        lines.append("| 16位以降 | … | … | … |")
+        lines += ["", "> 16位以降・マスク部分の詳細は有料記事で公開しています。", ""]
+
+    # 5. 今週の予約アクション提案（全マスキング）
+    insights = ctx["action_insights"]
+    lines += [
+        "---",
+        "",
+        "## 💡 今週の予約アクション提案",
+        "",
+        "完売状況と出勤傾向から、今週特に動くべきセラピストを3つの観点でピックアップしました。",
+        "**※ 無料記事ではセラピスト名をマスクしています。実名は有料記事で公開。**",
+        "",
+        "### ① 出勤が多いのにすぐ埋まる／急いで予約推奨",
+        "",
+        "出勤日数が多めでも完売率が高い「人気の本命」。早めに予約しないと埋まります。",
+        "",
+    ]
+    if insights["hot_high"]:
+        for _ in insights["hot_high"]:
+            lines.append(f"- {MASK}")
+    else:
+        lines.append("- 該当なし")
+
+    lines += [
+        "",
+        "### ② 出勤が少ないがすぐ埋まる／急いで予約推奨",
+        "",
+        "出勤日数が少なく、わずかな枠が瞬時に完売するレア枠。見つけたら即予約を。",
+        "",
+    ]
+    if insights["hot_low"]:
+        for _ in insights["hot_low"]:
+            lines.append(f"- {MASK}")
+    else:
+        lines.append("- 該当なし")
+
+    lines += [
+        "",
+        "### ③ 今週はいつもより出勤が多い／予約チャンス",
+        "",
+        "過去週平均より予約可能枠数が大きく増えているセラピスト。普段取りにくい人を狙うチャンス。",
+        "",
+    ]
+    if insights["more_shifts"]:
+        for _ in insights["more_shifts"]:
+            lines.append(f"- {MASK}")
+    else:
+        lines.append("- 該当なし（過去週データ不足の可能性）")
+
+    lines.append("")
 
     # 有料誘導
     lines += [
@@ -369,8 +543,9 @@ def generate_free(ctx: dict) -> str:
         "",
         "## 有料記事でわかること",
         "",
-        "- 🔓 全ランキングのマスクを外した**完全版**",
-        "- 📊 21位以降を含む全スタッフランキング（シフト・出勤日数付き）",
+        "- 🔓 全ランキングのマスクを外した**完全版（16位以降の全スタッフ含む）**",
+        "- 💡 予約アクション提案（① 出勤多×完売 ② 出勤少×完売 ③ 今週増シフト）の**実名**",
+        "- 📊 シフト・出勤日数付きの詳細ランキング",
         "- 📈 過去4週間トレンド（急上昇・急落スタッフを特定）",
         "- 🗓️ 来週の先行予約状況（今週末に動くべきスタッフ）",
         "- 💎 穴場スタッフ（スコア中位×予約が取りやすい）",
@@ -406,10 +581,11 @@ def generate_paid(ctx: dict) -> str:
         "> 2. 週間完売率ランキング（全順位・名前付き）",
         "> 3. 週間総合ランキング（全スタッフ・詳細付き）",
         "> 4. 月間総合ランキング（全スタッフ）",
-        "> 5. 過去4週間トレンド",
-        "> 6. 来週の先行予約状況",
-        "> 7. 穴場スタッフ",
-        "> 8. 先週の予測検証",
+        "> 5. 今週の予約アクション提案",
+        "> 6. 過去4週間トレンド",
+        "> 7. 来週の先行予約状況",
+        "> 8. 穴場スタッフ",
+        "> 9. 先週の予測検証",
         "",
         "---",
         "",
@@ -419,12 +595,12 @@ def generate_paid(ctx: dict) -> str:
     lines += [
         "## 📦 週間完売数ランキング",
         "",
-        "| 順位 | セラピスト | 予約枠数 | 完売率 | スコア |",
-        "|------|-----------|---------|--------|--------|",
+        "| 順位 | セラピスト | 完売数 | 予約可能枠数 | 完売率 | スコア |",
+        "|------|-----------|-------|------------|--------|--------|",
     ]
     for rank, s in enumerate(ctx["rank_by_booked"], 1):
         lines.append(
-            f"| {rank} | {s['staff_name']} | {s['booked_slots']}枠 "
+            f"| {rank} | {s['staff_name']} | {s['booked_slots']}枠 | {s['capacity']}枠 "
             f"| {s['sellout_rate']:.1f}% | {s['score']:.1f} |"
         )
 
@@ -435,13 +611,13 @@ def generate_paid(ctx: dict) -> str:
         "",
         "## 📈 週間完売率ランキング",
         "",
-        "| 順位 | セラピスト | 完売率 | 予約枠数 | スコア |",
-        "|------|-----------|--------|---------|--------|",
+        "| 順位 | セラピスト | 完売率 | 完売数 | 予約可能枠数 | スコア |",
+        "|------|-----------|--------|-------|------------|--------|",
     ]
     for rank, s in enumerate(ctx["rank_by_sellout"], 1):
         lines.append(
             f"| {rank} | {s['staff_name']} | {s['sellout_rate']:.1f}% "
-            f"| {s['booked_slots']}枠 | {s['score']:.1f} |"
+            f"| {s['booked_slots']}枠 | {s['capacity']}枠 | {s['score']:.1f} |"
         )
 
     # 3. 週間総合ランキング
@@ -451,18 +627,17 @@ def generate_paid(ctx: dict) -> str:
         "",
         "## 🏆 週間総合ランキング",
         "",
-        f"集計基準：{yesterday.isoformat()}時点（前日までの予約を反映）",
+        f"集計基準：{yesterday.isoformat()}時点（基準日までの予約を反映）",
         "",
-        "| 順位 | セラピスト | スコア | 完売率 | 予約枠数 | 週次変化 | 今日のシフト |",
-        "|------|-----------|--------|--------|---------|---------|------------|",
+        "| 順位 | セラピスト | スコア | 完売率 | 完売数 | 予約可能枠数 | 週次変化 |",
+        "|------|-----------|--------|--------|-------|------------|---------|",
     ]
     for rank, s in enumerate(ctx["rank_by_score"], 1):
         trend_str = f"+{s['trend']:.1f}pt" if s["trend"] >= 0 else f"{s['trend']:.1f}pt"
-        shift = (f"{s['today_shift_start']}〜{s['today_shift_end']}"
-                 if s.get("today_shift_start") else "本日休み")
         lines.append(
             f"| {rank} | {s['staff_name']} | {s['score']:.1f} | "
-            f"{s['sellout_rate']:.1f}% | {s['booked_slots']}枠 | {trend_str} | {shift} |"
+            f"{s['sellout_rate']:.1f}% | {s['booked_slots']}枠 | {s['capacity']}枠 "
+            f"| {trend_str} |"
         )
 
     # 4. 月間総合ランキング
@@ -477,16 +652,63 @@ def generate_paid(ctx: dict) -> str:
         lines += [f"※ データ蓄積中（{snap_count}週分）。2週目以降から有効になります。", ""]
     else:
         lines += [
-            "| 順位 | セラピスト | 月間平均完売率 | 月間合計予約枠 | 月間スコア |",
-            "|------|-----------|-------------|-------------|-----------|",
+            "| 順位 | セラピスト | 月間平均完売率 | 月間合計完売数 | 月間合計予約可能枠数 | 月間スコア |",
+            "|------|-----------|-------------|-------------|-------------------|-----------|",
         ]
         for rank, s in enumerate(monthly, 1):
             lines.append(
                 f"| {rank} | {s['staff_name']} | {s['avg_sellout']:.1f}% "
-                f"| {s['total_booked']}枠 | {s['score']:.1f} |"
+                f"| {s['total_booked']}枠 | {s['total_capacity']}枠 | {s['score']:.1f} |"
             )
 
-    # 5. 4週間トレンド
+    # 5. 今週の予約アクション提案
+    insights = ctx["action_insights"]
+    lines += [
+        "",
+        "---",
+        "",
+        "## 💡 今週の予約アクション提案",
+        "",
+        "完売状況と出勤傾向から、今週特に動くべきセラピストを3つの観点でピックアップしました。",
+        "",
+        "### ① 出勤が多いのにすぐ埋まる／急いで予約推奨",
+        "",
+        "出勤日数が多めでも完売率が高い「人気の本命」。早めに予約しないと埋まります。",
+        "",
+    ]
+    if insights["hot_high"]:
+        for s in insights["hot_high"]:
+            lines.append(f"- {s['staff_name']}")
+    else:
+        lines.append("- 該当なし")
+
+    lines += [
+        "",
+        "### ② 出勤が少ないがすぐ埋まる／急いで予約推奨",
+        "",
+        "出勤日数が少なく、わずかな枠が瞬時に完売するレア枠。見つけたら即予約を。",
+        "",
+    ]
+    if insights["hot_low"]:
+        for s in insights["hot_low"]:
+            lines.append(f"- {s['staff_name']}")
+    else:
+        lines.append("- 該当なし")
+
+    lines += [
+        "",
+        "### ③ 今週はいつもより出勤が多い／予約チャンス",
+        "",
+        "過去週平均より予約可能枠数が大きく増えているセラピスト。普段取りにくい人を狙うチャンス。",
+        "",
+    ]
+    if insights["more_shifts"]:
+        for s in insights["more_shifts"]:
+            lines.append(f"- {s['staff_name']}")
+    else:
+        lines.append("- 該当なし（過去週データ不足の可能性）")
+
+    # 6. 4週間トレンド
     lines += ["", "---", "", "## 📊 過去4週間トレンド", ""]
     available_weeks = [w for w in trend_weeks if w["snap_id"]]
     if len(available_weeks) < 2:
@@ -523,8 +745,8 @@ def generate_paid(ctx: dict) -> str:
                     lines.append(f"  > {rev}")
             lines.append("")
 
-    # 6. 来週先行予約
-    next_mon = ctx["monday"]
+    # 7. 来週先行予約（対象週の翌週）
+    next_mon = ctx["monday"] + timedelta(days=7)
     next_sun = next_mon + timedelta(days=6)
     lines += [
         "---", "",
@@ -533,18 +755,25 @@ def generate_paid(ctx: dict) -> str:
     ]
     if next_week_preview:
         lines += [
-            "| セラピスト | 先行予約枠 | 備考 |",
-            "|-----------|---------|------|",
+            "| セラピスト | 完売数 | 予約可能枠数 | 完売率 | 備考 |",
+            "|-----------|-------|------------|--------|------|",
         ]
         for r in next_week_preview[:10]:
             rate = (r["booked"] / r["capacity"] * 100) if r["capacity"] else 0
             comment = "🔥 要注意" if rate >= 30 else ("↑ 動き速い" if rate >= 15 else "")
-            lines.append(f"| {r['staff_name']} | {r['booked']}枠 | {comment} |")
-        lines += ["", "> ※ 土曜時点のデータです。週明けに急増するスタッフも存在します。", ""]
+            lines.append(
+                f"| {r['staff_name']} | {r['booked']}枠 | {r['capacity']}枠 "
+                f"| {rate:.1f}% | {comment} |"
+            )
+        lines += [
+            "",
+            f"> ※ 基準日 {ctx['this_week_snap']['reference_date']} 時点のデータです。週が進むに連れ急増するスタッフも存在します。",
+            "",
+        ]
     else:
         lines += ["来週分のデータはまだ収集されていません。", ""]
 
-    # 7. 穴場スタッフ
+    # 8. 穴場スタッフ
     lines += [
         "---", "",
         "## 💎 今週の穴場スタッフ",
@@ -554,19 +783,17 @@ def generate_paid(ctx: dict) -> str:
     ]
     for s in bargains:
         rev = pick_review(reviews_by_staff.get(s["staff_name"], []))
-        shift = (f"{s['today_shift_start']}〜{s['today_shift_end']}"
-                 if s.get("today_shift_start") else "本日休み")
         lines += [
             f"#### {s['staff_name']}",
-            f"スコア {s['score']:.1f}　完売率 {s['sellout_rate']:.1f}%",
-            f"今日のシフト：{shift}",
+            f"スコア {s['score']:.1f}　完売率 {s['sellout_rate']:.1f}%"
+            f"（完売 {s['booked_slots']}枠 / 予約可能 {s['capacity']}枠）",
         ]
         if rev:
             lines += [f"口コミ：{rev}", ""]
         else:
             lines.append("")
 
-    # 8. 予測検証
+    # 9. 予測検証
     lines += ["---", "", "## 🔮 先週の予測検証", ""]
     if snap_count < 3:
         lines += [
@@ -590,13 +817,15 @@ def generate_paid(ctx: dict) -> str:
 
 
 if __name__ == "__main__":
-    today = date.today()
-    days_since_sat = (today.weekday() - 5) % 7
-    target = today - timedelta(days=days_since_sat)  # 直近の土曜日
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--date", help="基準日 YYYY-MM-DD（省略時は今日）")
+    args = parser.parse_args()
+    target = date.fromisoformat(args.date) if args.date else date.today()
 
-    ctx = _build_context(target_saturday=target)
+    ctx = _build_context(target_date=target)
     if ctx is None:
-        print("データが不足しています。collect.py を先に実行してください。")
+        print("データが不足しています。collect.py と aggregate.py を先に実行してください。")
         exit(1)
 
     OUTPUT_DIR.mkdir(exist_ok=True)
