@@ -30,13 +30,11 @@ jobs:
       - name: 日別集計
         run: python src/aggregate.py --mode=daily
 
-      - name: 週別集計＋記事生成（土曜のみ）
-        # ubuntu の date コマンドで曜日を取得（6=土曜）
-        run: |
-          if [ "$(date -u +%u)" = "6" ]; then
-            python src/aggregate.py --mode=weekly
-            python src/generate_article.py
-          fi
+      - name: 週別集計
+        run: python src/aggregate.py --mode=weekly
+
+      - name: 記事下書き生成
+        run: python src/generate_article.py
 
       - name: DB・記事をコミット
         run: |

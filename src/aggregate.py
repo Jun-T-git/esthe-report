@@ -228,9 +228,8 @@ def main():
         aggregate_daily(ref)
 
     elif args.mode == "weekly":
-        # 土曜投稿想定: 翌週月曜を week_start とする
-        days_to_mon = (7 - ref.weekday()) % 7  # 今日が土曜なら2日後が月曜
-        week_start = ref + timedelta(days=days_to_mon if days_to_mon > 0 else 7)
+        # 毎日実行を想定し、ref を含む週（月曜開始）を集計対象とする
+        week_start = ref - timedelta(days=ref.weekday())
         print(f"週別集計: {week_start}週 (基準日: {ref})")
         aggregate_weekly(week_start, ref)
 

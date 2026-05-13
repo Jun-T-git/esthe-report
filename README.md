@@ -4,15 +4,12 @@
 
 ## 概要
 
-公式予約サイトの空き状況APIを毎日収集・蓄積し、完売率・出勤頻度・予約数・週次トレンドの4指標を合成した独自スコアでセラピストをランキングする。毎週土曜に記事下書きを自動生成する。
+公式予約サイトの空き状況APIを毎日収集・蓄積し、完売率・出勤頻度・予約数・週次トレンドの4指標を合成した独自スコアでセラピストをランキングする。毎日記事下書きを自動生成する（同名ファイルは上書き）。
 
 ```
 毎日8時（JST）
   collect.py      → 生スロットデータをDBに保存
-  aggregate.py    → 日別集計（完売率等）を計算
-
-毎週土曜8時（JST）追加実行
-  aggregate.py    → 週別集計・スコアリング
+  aggregate.py    → 日別＋週別集計（完売率等）を計算
   generate_article.py → note記事下書きを output/ に生成
 ```
 
@@ -29,7 +26,7 @@ esthe-report/
 ├── data/
 │   └── all_reviews.json      # 口コミデータ（定期更新要）
 ├── output/
-│   └── article_draft.md      # 生成された記事下書き（毎週土曜更新）
+│   └── article_*.md         # 生成された記事下書き（毎日更新・対象週で上書き）
 ├── .github/workflows/
 │   └── daily.yml             # GitHub Actions スケジュール実行
 ├── aroma_more.db             # SQLiteデータベース（自動コミット）
@@ -65,8 +62,7 @@ python3 src/generate_article.py   # output/article_draft.md が生成される
 
 | タイミング | 内容 |
 |-----------|------|
-| 毎日 23:00 UTC（= 翌8:00 JST） | 収集 + 日別集計 |
-| 毎週土曜 23:00 UTC | 上記 + 週別集計 + 記事生成 |
+| 毎日 23:00 UTC（= 翌8:00 JST） | 収集 + 日別集計 + 週別集計 + 記事生成 |
 
 実行後、`aroma_more.db` と `output/article_draft.md` の変更が自動コミットされる。
 
@@ -102,7 +98,7 @@ GitHub → Actions タブ → `日次データ収集・集計` → **Run workflo
 
 ## 記事生成
 
-毎週土曜に `output/article_draft.md` が自動生成される。
+毎日 `output/article_free_YYYYMMDD.md` と `output/article_paid_YYYYMMDD.md`（対象週の月曜日付）が自動生成される。同じ対象週の間は同名ファイルが上書きされる。
 
 | セクション | 公開範囲 | 内容 |
 |-----------|---------|------|
