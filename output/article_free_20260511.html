@@ -2,9 +2,11 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light">
 <title>【ランキング】データでわかるアロマモア セラピスト人気度分析 2026/05/17最新</title>
 <style>
+  /* ── Mobile-first ベース (〜599px) ── */
   :root {
     --bg: #fafaf7;
     --fg: #1d1c1a;
@@ -14,69 +16,122 @@
     --table-head: #f3eddd;
     --table-stripe: #f8f4ec;
   }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
   body {
     background: var(--bg);
     color: var(--fg);
-    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", "Noto Sans CJK JP", sans-serif;
-    max-width: 860px;
-    margin: 2rem auto;
-    padding: 1rem 1.5rem 4rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic",
+                 "Noto Sans CJK JP", "Helvetica Neue", Arial, sans-serif;
     line-height: 1.75;
+    margin: 0;
+    padding: 1rem env(safe-area-inset-right) 3rem env(safe-area-inset-left);
+    padding-inline: max(1rem, env(safe-area-inset-left));
+    font-size: 16px;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+  h1, h2, h3, h4 {
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif CJK JP", serif;
+    line-height: 1.4;
   }
   h1 {
-    font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif CJK JP", serif;
-    font-size: 1.9rem;
+    font-size: 1.4rem;
     border-bottom: 2px solid var(--accent);
-    padding-bottom: 0.6rem;
-    letter-spacing: 0.04em;
+    padding-bottom: 0.5rem;
+    letter-spacing: 0.02em;
+    margin: 0.5rem 0 1rem;
   }
   h2 {
-    font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif CJK JP", serif;
-    font-size: 1.4rem;
-    margin-top: 2.5rem;
+    font-size: 1.15rem;
+    margin: 2rem 0 0.8rem;
     color: #322;
     border-left: 4px solid var(--accent);
     padding-left: 0.6rem;
   }
-  h3, h4 { font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; }
-  h3 { font-size: 1.1rem; margin-top: 1.6rem; }
-  h4 { font-size: 1rem; margin-top: 1.4rem; color: #533; }
-  table {
-    border-collapse: collapse;
-    width: 100%;
-    margin: 1rem 0;
-    font-size: 0.95rem;
-  }
-  th, td {
-    border: 1px solid var(--rule);
-    padding: 0.5rem 0.75rem;
-    text-align: left;
-  }
-  th { background: var(--table-head); font-weight: 600; }
-  tr:nth-child(even) td { background: var(--table-stripe); }
+  h3 { font-size: 1.02rem; margin: 1.5rem 0 0.6rem; }
+  h4 { font-size: 0.96rem; margin: 1.2rem 0 0.5rem; color: #533; }
+
+  p, ul { margin: 0.7rem 0; }
+  ul { padding-left: 1.2rem; }
+  li { margin: 0.25rem 0; }
+
   blockquote {
     border-left: 3px solid var(--accent);
-    padding: 0.4rem 1rem;
+    padding: 0.4rem 0.75rem;
     background: #fff8e7;
     color: #4a4036;
     margin: 1rem 0;
+    font-size: 0.95rem;
   }
-  hr { border: none; border-top: 1px solid var(--rule); margin: 2rem 0; }
+  hr { border: none; border-top: 1px solid var(--rule); margin: 1.5rem 0; }
   strong { color: #322; }
-  ul { padding-left: 1.4rem; }
-  li { margin: 0.3rem 0; }
   em { color: var(--muted); font-style: italic; }
   code {
     background: #efe9d8;
-    padding: 0.1rem 0.35rem;
+    padding: 0.1rem 0.3rem;
     border-radius: 3px;
     font-family: "SF Mono", Menlo, Consolas, monospace;
-    font-size: 0.92em;
+    font-size: 0.9em;
+    word-break: break-all;
+  }
+
+  /* テーブル: 全ビューポートで「はみ出した時だけ横スクロール」。
+     display:block + overflow-x:auto + white-space:nowrap で、
+     コンテナに収まれば普通に表示、超えれば横スクロール。 */
+  table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+    border-collapse: collapse;
+    margin: 0.8rem 0;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent) transparent;
+  }
+  table::-webkit-scrollbar { height: 6px; }
+  table::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 3px; }
+  th, td {
+    border: 1px solid var(--rule);
+    padding: 0.4rem 0.6rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: var(--table-head); font-weight: 600; white-space: nowrap; }
+  tbody tr:nth-child(even) td { background: var(--table-stripe); }
+
+  /* ── タブレット以上 (≥600px) ── */
+  @media (min-width: 600px) {
+    body {
+      max-width: 860px;
+      margin: 2rem auto;
+      padding: 1.5rem 2rem 4rem;
+      font-size: 17px;
+    }
+    h1 { font-size: 1.9rem; padding-bottom: 0.6rem; letter-spacing: 0.04em; }
+    h2 { font-size: 1.4rem; margin-top: 2.5rem; }
+    h3 { font-size: 1.1rem; }
+    h4 { font-size: 1rem; }
+    blockquote { padding: 0.4rem 1rem; font-size: 1rem; }
+    hr { margin: 2rem 0; }
+    table { font-size: 0.95rem; }
+    th, td { padding: 0.5rem 0.75rem; }
+  }
+
+  /* ── デスクトップ (≥960px): 行間ゆとり ── */
+  @media (min-width: 960px) {
+    body { line-height: 1.85; }
   }
 </style>
 </head>
 <body>
 <h1>【ランキング】データでわかるアロマモア セラピスト人気度分析 2026/05/17最新</h1>
+<blockquote>
+<p>「絶対に失敗して後悔したくない」「体験レポートはどれも信用できない」「結局どれを購読すればいいか分からない」──そんなあなたへ。</p>
+<p><strong>データは嘘をつきません。</strong> 公開されている予約状況だけを材料に、いま本当に人気なセラピストを浮かび上がらせる週次レポートです。</p>
+</blockquote>
 <p><strong>用語の定義</strong></p>
 <ul>
 <li><strong>出勤枠数</strong>：そのスタッフが出勤している時間帯の15分刻みスロット数の合計。</li>
@@ -645,7 +700,6 @@
 <li>📈 過去4週間トレンド（急上昇・急落スタッフを特定）</li>
 <li>💎 穴場スタッフ（スコア中位×予約が取りやすい・口コミ抜粋付き）</li>
 </ul>
-<p>👉 <strong>[有料記事を読む]（リンクをここに貼る）</strong></p>
 <hr>
 <p><em>本記事は公開情報をもとにした個人による分析です。</em></p>
 </body>

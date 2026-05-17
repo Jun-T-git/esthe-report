@@ -8,3 +8,6 @@ logs/
 .direnv/
 result
 result-*
+
+# macOS
+.DS_Store
