@@ -123,8 +123,12 @@ def aggregate_weekly(week_start: date, reference_date: date):
     ref_str = reference_date.isoformat()
     aggregated_at = datetime.now().isoformat()
 
-    # 対象週の日別集計を取得（reference_date 以前で最新のデータを使う）
-    # 各 (staff_no, target_date) について reference_date 以前の最新 reference_date を使う
+    # 対象週の日別集計を取得。各 (staff_no, target_date) について:
+    #   - reference_date <= 基準日 (ref) かつ
+    #   - reference_date < target_date (※ 当日朝以降の収集は API が予約状況を
+    #     正しく返さない degraded スナップショットになるため除外。
+    #     UTC 跨ぎを考慮し JST 当日朝の収集 (UTC では target_date - 1) を採用)
+    # の中で最大の reference_date を採用する。
     rows = conn.execute("""
         SELECT da.staff_no, da.staff_name,
                da.target_date, da.booked, da.unavailable, da.total_slots, da.sellout_rate,
@@ -142,6 +146,7 @@ def aggregate_weekly(week_start: date, reference_date: date):
               WHERE da2.staff_no = da.staff_no
                 AND da2.target_date = da.target_date
                 AND da2.reference_date <= ?
+                AND da2.reference_date < da2.target_date
           )
     """, (ref_str, week_start.isoformat(), week_end.isoformat(), ref_str)).fetchall()
 
@@ -262,13 +267,26 @@ def vacuum_db() -> None:
     print("VACUUM 完了")
 
 
+def _default_reference_date() -> date:
+    """slot_records の最新収集日を返す（なければ today）。
+
+    cron が UTC 23:00 に開始してから collect.py 完了→aggregate.py 起動の
+    間に UTC 0時を跨ぐと date.today() が「データなしの日」を指してしまうため、
+    実際に存在する slot_records の最大日付を基準に揃える。
+    """
+    conn = get_conn()
+    row = conn.execute("SELECT MAX(date(collected_at)) FROM slot_records").fetchone()
+    conn.close()
+    return date.fromisoformat(row[0]) if row[0] else date.today()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["daily", "weekly", "all", "vacuum"], default="daily")
-    parser.add_argument("--date", help="基準日 YYYY-MM-DD（省略時は今日）")
+    parser.add_argument("--date", help="基準日 YYYY-MM-DD（省略時は最新収集日）")
     args = parser.parse_args()
 
-    ref = date.fromisoformat(args.date) if args.date else date.today()
+    ref = date.fromisoformat(args.date) if args.date else _default_reference_date()
 
     if args.mode == "daily":
         print(f"日別集計: {ref}")
