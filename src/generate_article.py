@@ -296,14 +296,9 @@ def get_action_insights(scored: list, week_start: str) -> dict:
 # ====================================================================
 # タイトル生成
 # ====================================================================
-def _month_week_label(d: date) -> str:
-    week_of_month = (d.day - 1) // 7 + 1
-    return f"{d.month}月第{week_of_month}週"
-
-
-def _make_title(active: list, snap_count: int, month_week: str, monday: date = None) -> str:
-    date_str = monday.strftime("%Y/%m/%d") if monday else month_week
-    return f"【週間ランキング】データでわかるアロマモア セラピスト人気度分析 {date_str}週"
+def _make_title(reference_date: date) -> str:
+    date_str = reference_date.strftime("%Y/%m/%d")
+    return f"【ランキング】データでわかるアロマモア セラピスト人気度分析 {date_str}最新"
 
 
 # ====================================================================
@@ -345,7 +340,6 @@ def _build_context(target_date: date = None) -> dict:
 
     return {
         "today": today,
-        "yesterday": reference,       # 表示用: 基準日
         "monday": week_start,         # 対象週の月曜
         "week_end": week_end,
         "this_week_snap": this_week_snap,
@@ -360,7 +354,7 @@ def _build_context(target_date: date = None) -> dict:
         "next_week_preview": next_week_preview,
         "bargains":        bargains,
         "action_insights": get_action_insights(active, this_week_snap["week_start"]),
-        "title": _make_title(active, snap_count, _month_week_label(week_start), monday=week_start),
+        "title": _make_title(reference),
     }
 
 
@@ -368,17 +362,10 @@ def _header(ctx: dict) -> list:
     return [
         f"# {ctx['title']}",
         "",
-        f"> **集計基準日**：{ctx['this_week_snap']['reference_date']}（基準日までの予約を反映）  ",
-        f"> **分析期間**：{ctx['this_week_snap']['week_start']} 〜 {ctx['this_week_snap']['week_end']}  ",
-        f"> **分析スタッフ数**：{len(ctx['active'])}名　蓄積データ：{ctx['snap_count']}週分",
-        "",
-        "> ⚠️ **注意**：完売数・完売率は **各日の朝8時(JST)時点** のスナップショットを使用しています。",
-        "> 当該日の朝以降に発生した予約（当日予約など）は反映されません。",
-        "",
         "**用語の定義**",
         "- **出勤枠数**：そのスタッフが出勤している時間帯の15分刻みスロット数の合計。",
-        "- **完売数**：上記のうち、当該日の朝8時(JST)時点で予約が入っていた枠の数（15分単位）。",
-        "- **完売率**：完売数 ÷ 出勤枠数 × 100。出勤時間のうち何%が予約で埋まったかを示す。",
+        "- **完売数**：そのうち予約が入っている枠の数（15分単位）。",
+        "- **完売率**：完売数 ÷ 出勤枠数 × 100。",
         "",
         "---",
         "",
@@ -391,12 +378,10 @@ def _header(ctx: dict) -> list:
 def generate_free(ctx: dict) -> str:
     lines = _header(ctx)
     active     = ctx["active"]
-    yesterday  = ctx["yesterday"]
     snap_count = ctx["snap_count"]
     monthly    = ctx["monthly"]
 
     lines += [
-        f"今週は**{len(active)}名**を4つの指標でランキングしました。",
         "**11〜15位は全項目公開**、それ以外は名前をマスクしています。詳細は有料記事をご覧ください。",
         "",
     ]
@@ -405,7 +390,7 @@ def generate_free(ctx: dict) -> str:
     lines += [
         "## 📦 週間完売数ランキング TOP15",
         "",
-        "基準日時点で最も多くの枠が予約済みになっているセラピストのランキングです。",
+        "予約済み枠の数が最も多いセラピストのランキングです。",
         "",
         "| 順位 | セラピスト | 完売数 | 出勤枠数 |",
         "|------|-----------|-------|------------|",
@@ -464,7 +449,7 @@ def generate_free(ctx: dict) -> str:
     lines += [
         "---",
         "",
-        f"## 📅 月間総合ランキング TOP15（直近{min(snap_count, 4)}週）",
+        "## 📅 月間総合ランキング TOP15（直近4週ベース）",
         "",
         "過去最大4週分を集計した月間ランキングです。継続して人気が高いセラピストを把握できます。",
         "",
@@ -555,7 +540,7 @@ def generate_free(ctx: dict) -> str:
         "",
         "---",
         "",
-        f"*集計基準日：{yesterday.isoformat()}　本記事は公開情報をもとにした個人による分析です。*",
+        "*本記事は公開情報をもとにした個人による分析です。*",
     ]
     return "\n".join(lines)
 
@@ -565,7 +550,6 @@ def generate_free(ctx: dict) -> str:
 # ====================================================================
 def generate_paid(ctx: dict) -> str:
     active             = ctx["active"]
-    yesterday          = ctx["yesterday"]
     snap_count         = ctx["snap_count"]
     reviews_by_staff   = ctx["reviews_by_staff"]
     trend_weeks        = ctx["trend_weeks"]
@@ -627,8 +611,6 @@ def generate_paid(ctx: dict) -> str:
         "",
         "## 🏆 週間総合ランキング",
         "",
-        f"集計基準：{yesterday.isoformat()}時点（基準日までの予約を反映）",
-        "",
         "| 順位 | セラピスト | スコア | 完売率 | 完売数 | 出勤枠数 | 週次変化 |",
         "|------|-----------|--------|--------|-------|------------|---------|",
     ]
@@ -645,11 +627,11 @@ def generate_paid(ctx: dict) -> str:
         "",
         "---",
         "",
-        f"## 📅 月間総合ランキング（直近{min(snap_count, 4)}週）",
+        "## 📅 月間総合ランキング（直近4週ベース）",
         "",
     ]
     if len(monthly) < 2:
-        lines += [f"※ データ蓄積中（{snap_count}週分）。2週目以降から有効になります。", ""]
+        lines += ["※ データ蓄積中（2週目以降から有効になります）。", ""]
     else:
         lines += [
             "| 順位 | セラピスト | 月間平均完売率 | 月間合計完売数 | 月間合計出勤枠数 | 月間スコア |",
@@ -713,8 +695,7 @@ def generate_paid(ctx: dict) -> str:
     available_weeks = [w for w in trend_weeks if w["snap_id"]]
     if len(available_weeks) < 2:
         lines += [
-            f"※ 現在{snap_count}週分のデータを蓄積中です。",
-            "トレンド分析は2週目以降から有効になります。",
+            "※ データ蓄積中。トレンド分析は2週目以降から有効になります。",
             "",
         ]
     else:
@@ -767,7 +748,7 @@ def generate_paid(ctx: dict) -> str:
             )
         lines += [
             "",
-            f"> ※ 基準日 {ctx['this_week_snap']['reference_date']} 時点のデータです。週が進むに連れ急増するスタッフも存在します。",
+            "> ※ 週が進むに連れ急増するスタッフも存在します。",
             "",
         ]
     else:
@@ -797,7 +778,7 @@ def generate_paid(ctx: dict) -> str:
     lines += ["---", "", "## 🔮 先週の予測検証", ""]
     if snap_count < 3:
         lines += [
-            f"※ 現在{snap_count}週分のデータです。予測検証は3週目以降から掲載します。", ""
+            "※ 予測検証は3週目以降から掲載します。", ""
         ]
     else:
         lines += [
@@ -810,7 +791,6 @@ def generate_paid(ctx: dict) -> str:
     lines += [
         "---",
         "",
-        f"*集計基準日：{yesterday.isoformat()}　蓄積：{snap_count}週分*",
         "*本記事は公開情報をもとにした個人による分析です。*",
     ]
     return "\n".join(lines)
