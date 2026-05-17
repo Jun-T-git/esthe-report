@@ -25,8 +25,9 @@ from db import DB_PATH, get_conn
 from score import calc_score
 
 
-# 生データ保持期間（これより古い slot_records / staff_snapshots は削除）
-RAW_DATA_RETENTION_DAYS = 14
+# 生データ保持期間（これより古い slot_records / staff_snapshots は削除）。
+# GitHub の 100MB ファイルサイズ上限を踏まえて 7 日に設定。
+RAW_DATA_RETENTION_DAYS = 7
 
 
 # ================================================================
@@ -228,16 +229,17 @@ def aggregate_weekly(week_start: date, reference_date: date):
 # ================================================================
 def cleanup_raw_data(reference_date: date) -> None:
     """
-    reference_date から RAW_DATA_RETENTION_DAYS 日より古い生データを削除する。
+    reference_date から見て RAW_DATA_RETENTION_DAYS 日より前の生データを削除する。
+    結果として、reference_date を含む直近 RAW_DATA_RETENTION_DAYS 日が残る。
     daily_aggregates / weekly_summaries は永続化されるので削除対象外。
     """
     cutoff = (reference_date - timedelta(days=RAW_DATA_RETENTION_DAYS)).isoformat()
     conn = get_conn()
     slots = conn.execute(
-        "DELETE FROM slot_records WHERE date(collected_at) < ?", (cutoff,)
+        "DELETE FROM slot_records WHERE date(collected_at) <= ?", (cutoff,)
     ).rowcount
     snaps = conn.execute(
-        "DELETE FROM staff_snapshots WHERE date(collected_at) < ?", (cutoff,)
+        "DELETE FROM staff_snapshots WHERE date(collected_at) <= ?", (cutoff,)
     ).rowcount
     conn.commit()
     conn.close()

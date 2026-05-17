@@ -3,9 +3,10 @@
 
 設計方針:
   生データ層   → slot_records, staff_snapshots
-                  収集した事実をそのまま保存。**直近14日のみ保持**
+                  収集した事実をそのまま保存。**直近7日のみ保持**
                   （aggregate.py --mode=daily 実行時に古いものは削除）。
                   再集計はこの範囲内でのみ可能。
+                  保持期間は src/aggregate.py の RAW_DATA_RETENTION_DAYS で調整。
   集計層       → daily_aggregates, weekly_summaries
                   生データから導出した恒久データ。永続化される。
                   記事生成・履歴参照はこちらから。
@@ -13,8 +14,10 @@
                   weekly_summaries / daily_aggregates を読むだけ。
 
   ※ slot_records を削除するため、過去日付について aggregate.py --mode=all
-     は直近14日分のみ再集計できる。daily 集計ロジックを変えた場合、過去の
+     は直近7日分のみ再集計できる。daily 集計ロジックを変えた場合、過去の
      daily_aggregates 値は古いロジックのまま残る点に注意。
+  ※ DBファイルは GitHub に commit されるため、100MB 上限を避ける狙いで
+     保持期間を短めにしている（14日だと約140MBに到達するため）。
 """
 
 import sqlite3
