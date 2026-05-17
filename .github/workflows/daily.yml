@@ -36,6 +36,12 @@ jobs:
       - name: 記事下書き生成
         run: python src/generate_article.py
 
+      - name: 週次 VACUUM（土曜のみ）
+        run: |
+          if [ "$(date -u +%u)" = "6" ]; then
+            python src/aggregate.py --mode=vacuum
+          fi
+
       - name: DB・記事をコミット
         run: |
           git config user.name  "github-actions[bot]"

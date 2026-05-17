@@ -3,11 +3,18 @@
 
 設計方針:
   生データ層   → slot_records, staff_snapshots
-                  収集した事実をそのまま保存。再集計・再分析の源泉。
+                  収集した事実をそのまま保存。**直近14日のみ保持**
+                  （aggregate.py --mode=daily 実行時に古いものは削除）。
+                  再集計はこの範囲内でのみ可能。
   集計層       → daily_aggregates, weekly_summaries
-                  生データから導出。パラメータを変えて再計算可能。
+                  生データから導出した恒久データ。永続化される。
+                  記事生成・履歴参照はこちらから。
   アプリ層     → generate_article.py など
-                  weekly_summaries を読むだけ。スキーマ変更不要。
+                  weekly_summaries / daily_aggregates を読むだけ。
+
+  ※ slot_records を削除するため、過去日付について aggregate.py --mode=all
+     は直近14日分のみ再集計できる。daily 集計ロジックを変えた場合、過去の
+     daily_aggregates 値は古いロジックのまま残る点に注意。
 """
 
 import sqlite3

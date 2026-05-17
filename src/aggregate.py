@@ -5,17 +5,28 @@
 集計ロジックを変えたい場合はここだけ修正すればよい。
 
 使い方:
-  python3 aggregate.py --mode=daily              # 今日分の日別集計
+  python3 aggregate.py --mode=daily              # 今日分の日別集計（+生データ削除）
   python3 aggregate.py --mode=weekly             # 直近週の週別集計
   python3 aggregate.py --mode=daily --date=2026-05-10   # 指定日
   python3 aggregate.py --mode=all                # 全期間を再計算
+  python3 aggregate.py --mode=vacuum             # DB物理サイズ縮小（土曜のみ想定）
+
+保持方針:
+  slot_records / staff_snapshots は直近 RAW_DATA_RETENTION_DAYS 日のみ保持。
+  それ以前は --mode=daily 実行時に削除される。daily_aggregates と
+  weekly_summaries は永続化される（再集計不要）。
 """
 
 import argparse
+import sqlite3
 from datetime import datetime, timedelta, date
 
-from db import get_conn
+from db import DB_PATH, get_conn
 from score import calc_score
+
+
+# 生データ保持期間（これより古い slot_records / staff_snapshots は削除）
+RAW_DATA_RETENTION_DAYS = 14
 
 
 # ================================================================
@@ -215,9 +226,43 @@ def aggregate_weekly(week_start: date, reference_date: date):
 # ================================================================
 # CLI
 # ================================================================
+def cleanup_raw_data(reference_date: date) -> None:
+    """
+    reference_date から RAW_DATA_RETENTION_DAYS 日より古い生データを削除する。
+    daily_aggregates / weekly_summaries は永続化されるので削除対象外。
+    """
+    cutoff = (reference_date - timedelta(days=RAW_DATA_RETENTION_DAYS)).isoformat()
+    conn = get_conn()
+    slots = conn.execute(
+        "DELETE FROM slot_records WHERE date(collected_at) < ?", (cutoff,)
+    ).rowcount
+    snaps = conn.execute(
+        "DELETE FROM staff_snapshots WHERE date(collected_at) < ?", (cutoff,)
+    ).rowcount
+    conn.commit()
+    conn.close()
+    if slots > 0 or snaps > 0:
+        print(f"  生データ削除 (cutoff: {cutoff}): "
+              f"slot_records {slots}件, staff_snapshots {snaps}件")
+    else:
+        print(f"  生データ削除なし (cutoff: {cutoff})")
+
+
+def vacuum_db() -> None:
+    """DBファイルの物理サイズを縮小（DELETE後の空き領域を回収）。
+    WALモード下でも実行可能だが、autocommit でないと失敗するため
+    isolation_level=None で接続する。"""
+    print("VACUUM 実行中...")
+    conn = sqlite3.connect(DB_PATH)
+    conn.isolation_level = None  # autocommit
+    conn.execute("VACUUM")
+    conn.close()
+    print("VACUUM 完了")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["daily", "weekly", "all"], default="daily")
+    parser.add_argument("--mode", choices=["daily", "weekly", "all", "vacuum"], default="daily")
     parser.add_argument("--date", help="基準日 YYYY-MM-DD（省略時は今日）")
     args = parser.parse_args()
 
@@ -226,12 +271,16 @@ def main():
     if args.mode == "daily":
         print(f"日別集計: {ref}")
         aggregate_daily(ref)
+        cleanup_raw_data(ref)
 
     elif args.mode == "weekly":
         # 毎日実行を想定し、ref を含む週（月曜開始）を集計対象とする
         week_start = ref - timedelta(days=ref.weekday())
         print(f"週別集計: {week_start}週 (基準日: {ref})")
         aggregate_weekly(week_start, ref)
+
+    elif args.mode == "vacuum":
+        vacuum_db()
 
     elif args.mode == "all":
         # 全収集日を再集計
