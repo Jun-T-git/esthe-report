@@ -1,11 +1,10 @@
 """
-note記事の下書きを自動生成（毎週土曜投稿向け）
+note記事の下書きを自動生成
 
 データ参照ルール:
-  今週の確定データ  = 前日（金曜）のスナップショット
-  過去4週トレンド   = 各週金曜のスナップショットを遡って比較
-  来週の先行予約    = 本日（土曜）スナップショットの7日先
-  前日予約まで確定  = 当日の同日予約は含まない前提
+  対象週         = today を含む週 (Mon-Sun)
+  各日のデータ   = その日の朝のスナップショット (degraded 除外)
+  過去4週トレンド = 各週 week_start で最新の reference_date を採用
 """
 
 import json
@@ -84,19 +83,6 @@ def find_snapshot_before(target_date: date):
     return _snap_dict(row) if row else None
 
 
-def find_latest_snapshot():
-    """最新の週次サマリを返す（next_week_preview の参照日に使う）"""
-    conn = get_conn()
-    row = conn.execute("""
-        SELECT week_start, week_end, reference_date
-        FROM weekly_summaries
-        ORDER BY reference_date DESC, week_start DESC
-        LIMIT 1
-    """).fetchone()
-    conn.close()
-    return _snap_dict(row) if row else None
-
-
 def count_snapshots():
     conn = get_conn()
     n = conn.execute(
@@ -104,26 +90,6 @@ def count_snapshots():
     ).fetchone()[0]
     conn.close()
     return n
-
-
-# ====================================================================
-# 来週の先行予約データ（daily_aggregates から直接集計）
-# ====================================================================
-def get_next_week_preview(reference_date: str, next_mon: date, next_sun: date) -> list:
-    conn = get_conn()
-    rows = conn.execute("""
-        SELECT staff_no, staff_name,
-               SUM(booked) AS booked,
-               SUM(total_slots - unavailable) AS capacity
-        FROM daily_aggregates
-        WHERE reference_date = ?
-          AND target_date BETWEEN ? AND ?
-        GROUP BY staff_no, staff_name
-        HAVING booked > 0
-        ORDER BY booked DESC
-    """, (reference_date, next_mon.isoformat(), next_sun.isoformat())).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
 
 
 # ====================================================================
@@ -318,10 +284,7 @@ def _build_context(target_date: date = None) -> dict:
     week_start = date.fromisoformat(this_week_snap["week_start"])
     week_end   = date.fromisoformat(this_week_snap["week_end"])
     reference  = date.fromisoformat(this_week_snap["reference_date"])
-    next_mon   = week_start + timedelta(days=7)
-    next_sun   = week_start + timedelta(days=13)
 
-    next_week_snap = find_latest_snapshot()
     snap_count = count_snapshots()
 
     scored = score_snapshot(this_week_snap["week_start"], this_week_snap["reference_date"])
@@ -331,12 +294,6 @@ def _build_context(target_date: date = None) -> dict:
 
     third = len(active) // 3
     bargains = sorted(active[third: third * 2], key=lambda x: x["working_days"])[:3]
-
-    next_week_preview = []
-    if next_week_snap:
-        next_week_preview = get_next_week_preview(
-            next_week_snap["reference_date"], next_mon, next_sun
-        )
 
     return {
         "today": today,
@@ -351,7 +308,6 @@ def _build_context(target_date: date = None) -> dict:
         "monthly":         get_monthly_scores(n_weeks=4),
         "reviews_by_staff": load_reviews(),
         "trend_weeks":     build_trend_table(today),
-        "next_week_preview": next_week_preview,
         "bargains":        bargains,
         "action_insights": get_action_insights(active, this_week_snap["week_start"]),
         "title": _make_title(reference),
@@ -530,11 +486,9 @@ def generate_free(ctx: dict) -> str:
         "",
         "- 🔓 全ランキングのマスクを外した**完全版（16位以降の全スタッフ含む）**",
         "- 💡 予約アクション提案（① 出勤多×完売 ② 出勤少×完売 ③ 今週増シフト）の**実名**",
-        "- 📊 シフト・出勤日数付きの詳細ランキング",
+        "- 📊 出勤日数付きの詳細ランキング",
         "- 📈 過去4週間トレンド（急上昇・急落スタッフを特定）",
-        "- 🗓️ 来週の先行予約状況（今週末に動くべきスタッフ）",
-        "- 💎 穴場スタッフ（スコア中位×予約が取りやすい）",
-        "- 🔮 先週の予測検証",
+        "- 💎 穴場スタッフ（スコア中位×予約が取りやすい・口コミ抜粋付き）",
         "",
         "👉 **[有料記事を読む]（リンクをここに貼る）**",
         "",
@@ -553,7 +507,6 @@ def generate_paid(ctx: dict) -> str:
     snap_count         = ctx["snap_count"]
     reviews_by_staff   = ctx["reviews_by_staff"]
     trend_weeks        = ctx["trend_weeks"]
-    next_week_preview  = ctx["next_week_preview"]
     bargains           = ctx["bargains"]
     monthly            = ctx["monthly"]
 
@@ -567,9 +520,7 @@ def generate_paid(ctx: dict) -> str:
         "> 4. 月間総合ランキング（全スタッフ）",
         "> 5. 今週の予約アクション提案",
         "> 6. 過去4週間トレンド",
-        "> 7. 来週の先行予約状況",
-        "> 8. 穴場スタッフ",
-        "> 9. 先週の予測検証",
+        "> 7. 穴場スタッフ",
         "",
         "---",
         "",
@@ -726,35 +677,7 @@ def generate_paid(ctx: dict) -> str:
                     lines.append(f"  > {rev}")
             lines.append("")
 
-    # 7. 来週先行予約（対象週の翌週）
-    next_mon = ctx["monday"] + timedelta(days=7)
-    next_sun = next_mon + timedelta(days=6)
-    lines += [
-        "---", "",
-        f"## 🗓️ 来週の先行予約状況（{next_mon.strftime('%m/%d')}〜{next_sun.strftime('%m/%d')}）",
-        "",
-    ]
-    if next_week_preview:
-        lines += [
-            "| セラピスト | 完売数 | 出勤枠数 | 完売率 | 備考 |",
-            "|-----------|-------|------------|--------|------|",
-        ]
-        for r in next_week_preview[:10]:
-            rate = (r["booked"] / r["capacity"] * 100) if r["capacity"] else 0
-            comment = "🔥 要注意" if rate >= 30 else ("↑ 動き速い" if rate >= 15 else "")
-            lines.append(
-                f"| {r['staff_name']} | {r['booked']}枠 | {r['capacity']}枠 "
-                f"| {rate:.1f}% | {comment} |"
-            )
-        lines += [
-            "",
-            "> ※ 週が進むに連れ急増するスタッフも存在します。",
-            "",
-        ]
-    else:
-        lines += ["来週分のデータはまだ収集されていません。", ""]
-
-    # 8. 穴場スタッフ
+    # 7. 穴場スタッフ
     lines += [
         "---", "",
         "## 💎 今週の穴場スタッフ",
@@ -773,20 +696,6 @@ def generate_paid(ctx: dict) -> str:
             lines += [f"口コミ：{rev}", ""]
         else:
             lines.append("")
-
-    # 9. 予測検証
-    lines += ["---", "", "## 🔮 先週の予測検証", ""]
-    if snap_count < 3:
-        lines += [
-            "※ 予測検証は3週目以降から掲載します。", ""
-        ]
-    else:
-        lines += [
-            "先週号で「早期完売が見込まれる」と予告したスタッフの実際の結果です。",
-            "",
-            "（※ 次週以降、実績データと照合して自動生成されます）",
-            "",
-        ]
 
     lines += [
         "---",
