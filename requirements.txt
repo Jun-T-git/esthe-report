@@ -1,3 +1,4 @@
-# 収集・集計・記事生成は Python 標準ライブラリのみで動作 (urllib, json, sqlite3, datetime)
-# アイキャッチ画像生成のみ Pillow が必要。
-Pillow>=10.0,<13
+# 収集・集計の中核は Python 標準ライブラリのみで動作 (urllib, json, sqlite3, datetime)
+# 以下は記事/画像生成で必要:
+Pillow>=10,<13
+markdown>=3.5,<4

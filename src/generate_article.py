@@ -1,5 +1,5 @@
 """
-note記事の下書きを自動生成
+note記事の下書きを自動生成 (Markdown + HTML)
 
 データ参照ルール:
   対象週         = today を含む週 (Mon-Sun)
@@ -10,6 +10,9 @@ note記事の下書きを自動生成
 import json
 from datetime import datetime, timedelta, date
 from pathlib import Path
+
+import markdown
+
 from db import get_conn
 from score import score_snapshot, calc_score
 
@@ -319,6 +322,7 @@ def _header(ctx: dict) -> list:
         f"# {ctx['title']}",
         "",
         "**用語の定義**",
+        "",
         "- **出勤枠数**：そのスタッフが出勤している時間帯の15分刻みスロット数の合計。",
         "- **完売数**：そのうち予約が入っている枠の数（15分単位）。",
         "- **完売率**：完売数 ÷ 出勤枠数 × 100。",
@@ -705,6 +709,106 @@ def generate_paid(ctx: dict) -> str:
     return "\n".join(lines)
 
 
+# ====================================================================
+# HTML 変換
+# ====================================================================
+# note 投稿は基本的に Markdown だが、ブラウザプレビュー / Web 公開用に
+# スタンドアロンな HTML も同時に書き出しておく。
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title>
+<style>
+  :root {{
+    --bg: #fafaf7;
+    --fg: #1d1c1a;
+    --muted: #6a635a;
+    --accent: #b88a3f;          /* シャンパンゴールド */
+    --rule: #e0d6c5;
+    --table-head: #f3eddd;
+    --table-stripe: #f8f4ec;
+  }}
+  body {{
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", "Noto Sans CJK JP", sans-serif;
+    max-width: 860px;
+    margin: 2rem auto;
+    padding: 1rem 1.5rem 4rem;
+    line-height: 1.75;
+  }}
+  h1 {{
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif CJK JP", serif;
+    font-size: 1.9rem;
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 0.6rem;
+    letter-spacing: 0.04em;
+  }}
+  h2 {{
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif CJK JP", serif;
+    font-size: 1.4rem;
+    margin-top: 2.5rem;
+    color: #322;
+    border-left: 4px solid var(--accent);
+    padding-left: 0.6rem;
+  }}
+  h3, h4 {{ font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; }}
+  h3 {{ font-size: 1.1rem; margin-top: 1.6rem; }}
+  h4 {{ font-size: 1rem; margin-top: 1.4rem; color: #533; }}
+  table {{
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1rem 0;
+    font-size: 0.95rem;
+  }}
+  th, td {{
+    border: 1px solid var(--rule);
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+  }}
+  th {{ background: var(--table-head); font-weight: 600; }}
+  tr:nth-child(even) td {{ background: var(--table-stripe); }}
+  blockquote {{
+    border-left: 3px solid var(--accent);
+    padding: 0.4rem 1rem;
+    background: #fff8e7;
+    color: #4a4036;
+    margin: 1rem 0;
+  }}
+  hr {{ border: none; border-top: 1px solid var(--rule); margin: 2rem 0; }}
+  strong {{ color: #322; }}
+  ul {{ padding-left: 1.4rem; }}
+  li {{ margin: 0.3rem 0; }}
+  em {{ color: var(--muted); font-style: italic; }}
+  code {{
+    background: #efe9d8;
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.92em;
+  }}
+</style>
+</head>
+<body>
+{body}
+</body>
+</html>
+"""
+
+
+def markdown_to_html(md_text: str, title: str) -> str:
+    # nl2br を有効にすると段落内の改行が <br> 化されてリストが list として
+    # 認識されなくなるため使わない。tables 拡張のみ最低限。
+    body = markdown.markdown(
+        md_text,
+        extensions=["tables", "sane_lists"],
+        output_format="html5",
+    )
+    return HTML_TEMPLATE.format(title=title, body=body)
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
@@ -722,17 +826,23 @@ if __name__ == "__main__":
     free = generate_free(ctx)
     paid = generate_paid(ctx)
 
-    # ファイル名に記事対象週（次の月曜）の日付を含める
+    # ファイル名に対象週の月曜日付を含める
     date_tag = ctx["monday"].strftime("%Y%m%d")
-    out_free = OUTPUT_DIR / f"article_free_{date_tag}.md"
-    out_paid = OUTPUT_DIR / f"article_paid_{date_tag}.md"
+    title = ctx["title"]
 
-    out_free.write_text(free, encoding="utf-8")
-    out_paid.write_text(paid, encoding="utf-8")
+    outputs = {
+        OUTPUT_DIR / f"article_free_{date_tag}.md":   free,
+        OUTPUT_DIR / f"article_paid_{date_tag}.md":   paid,
+        OUTPUT_DIR / f"article_free_{date_tag}.html": markdown_to_html(free, title),
+        OUTPUT_DIR / f"article_paid_{date_tag}.html": markdown_to_html(paid, title),
+    }
+    for path, content in outputs.items():
+        path.write_text(content, encoding="utf-8")
 
-    print(f"生成完了:")
-    print(f"  無料記事 → {out_free}")
-    print(f"  有料記事 → {out_paid}")
+    print("生成完了:")
+    for path in outputs:
+        print(f"  {path.suffix.upper()[1:]:5} → {path}")
+
     print("\n--- 無料記事プレビュー ---")
     for line in free.split("\n")[:50]:
         print(line)

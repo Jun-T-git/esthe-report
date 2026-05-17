@@ -10,9 +10,12 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        # Pillow 同梱の Python 環境 (アイキャッチ画像生成用)
+        # Pillow + markdown 同梱の Python 環境
+        # - pillow: アイキャッチ画像生成
+        # - markdown: 記事 HTML 変換 (tables 拡張あり)
         pythonEnv = pkgs.python312.withPackages (ps: with ps; [
           pillow
+          markdown
         ]);
       in
       {
