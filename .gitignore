@@ -3,3 +3,8 @@ __pycache__/
 logs/
 *.db-shm
 *.db-wal
+
+# Nix / direnv
+.direnv/
+result
+result-*

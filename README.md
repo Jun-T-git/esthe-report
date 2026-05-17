@@ -38,23 +38,55 @@ esthe-report/
 
 ### 必要環境
 
-- Python 3.10 以上
-- 外部ライブラリ不要（標準ライブラリのみ使用）
+- 推奨: [Nix](https://nixos.org/) (flakes 有効)
+- 任意: [direnv](https://direnv.net/) + [nix-direnv](https://github.com/nix-community/nix-direnv)
+- 本番(GitHub Actions)では Python 3.12 標準ライブラリのみで動作。Nix 環境では sqlite-web も同梱。
 
-### ローカルで試す
+### Nix で開発環境構築（推奨）
+
+#### 1. Nix をインストール（未導入なら）
+
+[Determinate Systems の installer](https://determinate.systems/posts/determinate-nix-installer) が手軽です:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
+```
+
+#### 2. devShell に入る
 
 ```bash
 git clone git@github.com:Jun-T-git/esthe-report.git
 cd esthe-report
 
-# DB初期化
+# direnv ユーザー
+direnv allow      # 以後ディレクトリに入るだけで自動有効化
+
+# direnv を使わない場合
+nix develop       # devShell に入る
+```
+
+入ると次が使えます:
+- `python3` (3.12)
+- `sqlite3` (CLI)
+- `sqlite_web aroma_more.db --read-only --no-browser` → http://localhost:8080 で DB 閲覧
+
+#### 3. ローカル実行例
+
+```bash
+# DB 初期化（既存DBがある場合は不要）
 python3 src/db.py
 
-# 手動で1回収集・集計・記事生成
+# 手動で1回 収集 → 集計 → 記事生成
 python3 src/collect.py
 python3 src/aggregate.py --mode=daily
-python3 src/generate_article.py   # output/article_draft.md が生成される
+python3 src/aggregate.py --mode=weekly
+python3 src/generate_article.py   # output/article_free_*.md と article_paid_*.md
 ```
+
+### Nix を使わない場合
+
+Python 3.10+ があれば標準ライブラリだけで動きます（記事生成・集計はOK）。
+DBブラウザを使いたい場合のみ `pip install sqlite-web` が必要。
 
 ## 自動実行（GitHub Actions）
 
