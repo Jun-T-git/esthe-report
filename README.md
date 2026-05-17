@@ -8,9 +8,10 @@
 
 ```
 毎日8時（JST）
-  collect.py      → 生スロットデータをDBに保存
-  aggregate.py    → 日別＋週別集計（完売率等）を計算
-  generate_article.py → note記事下書きを output/ に生成
+  collect.py             → 生スロットデータをDBに保存
+  aggregate.py           → 日別＋週別集計（完売率等）を計算
+  generate_article.py    → note記事下書きを output/ に生成
+  generate_eyecatch.py   → アイキャッチ画像を output/eyecatch_*.png に生成
 ```
 
 ## ディレクトリ構造

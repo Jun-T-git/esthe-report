@@ -30,9 +30,12 @@ python3 src/aggregate.py --mode=weekly >> "$LOG" 2>&1
 log "4. 記事下書き生成"
 python3 src/generate_article.py >> "$LOG" 2>&1
 
+log "5. アイキャッチ画像生成"
+python3 src/generate_eyecatch.py >> "$LOG" 2>&1
+
 # ── 週次 VACUUM (土曜のみ) ──────────────────────────
 if [ "$(date +%u)" = "6" ]; then
-    log "5. VACUUM (週1回)"
+    log "6. VACUUM (週1回)"
     python3 src/aggregate.py --mode=vacuum >> "$LOG" 2>&1
 fi
 

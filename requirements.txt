@@ -1,2 +1,3 @@
-# 標準ライブラリのみ使用しているため依存パッケージなし
-# urllib, json, sqlite3, datetime はすべてPython標準ライブラリ
+# 収集・集計・記事生成は Python 標準ライブラリのみで動作 (urllib, json, sqlite3, datetime)
+# アイキャッチ画像生成のみ Pillow が必要。
+Pillow>=10.0,<13

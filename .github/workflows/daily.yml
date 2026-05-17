@@ -24,6 +24,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: アイキャッチ生成用の依存をインストール
+        run: |
+          pip install -r requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+
       - name: 生データ収集
         run: python src/collect.py
 
@@ -35,6 +41,12 @@ jobs:
 
       - name: 記事下書き生成
         run: python src/generate_article.py
+
+      - name: アイキャッチ画像生成
+        env:
+          # Ubuntu の fonts-noto-cjk 標準パス
+          NOTO_CJK_FONT: /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc
+        run: python src/generate_eyecatch.py
 
       - name: 週次 VACUUM（土曜のみ）
         run: |
