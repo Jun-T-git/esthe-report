@@ -80,7 +80,7 @@ def score_snapshot(week_start: str, reference_date: str) -> list:
             "sellout_rate": r["sellout_rate"],
             "working_days": r["working_days"],
             "booked_slots": r["total_booked"],         # 完売数
-            "capacity": r["total_capacity"],           # 予約可能枠数
+            "capacity": r["total_capacity"],           # 出勤枠数
             "trend": round(trend, 1),
         })
 
