@@ -48,11 +48,8 @@ jobs:
           NOTO_CJK_FONT: /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc
         run: python src/generate_eyecatch.py
 
-      - name: 週次 VACUUM（土曜のみ）
-        run: |
-          if [ "$(date -u +%u)" = "6" ]; then
-            python src/aggregate.py --mode=vacuum
-          fi
+      - name: VACUUM（毎日実行・DBファイルの物理サイズを縮小）
+        run: python src/aggregate.py --mode=vacuum
 
       - name: DB・記事をコミット
         run: |

@@ -26,8 +26,10 @@ from score import calc_score
 
 
 # 生データ保持期間（これより古い slot_records / staff_snapshots は削除）。
-# GitHub の 100MB ファイルサイズ上限を踏まえて 7 日に設定。
-RAW_DATA_RETENTION_DAYS = 7
+# GitHub の 100MB ファイルサイズ上限を踏まえて 3 日に設定。
+# 週次集計は daily_aggregates（永続）から計算するため、slot_records は
+# 直近の再集計用バッファとしてだけ保持すればよい。
+RAW_DATA_RETENTION_DAYS = 3
 
 
 # ================================================================
