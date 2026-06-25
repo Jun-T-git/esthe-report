@@ -174,29 +174,13 @@ def aggregate_weekly(week_start: date, reference_date: date):
         capacity = r["total_slots"] - r["unavailable"]
         d["total_capacity"] += capacity
 
-    # スコア計算（正規化のため最大予約数を先に求める）
-    max_booked = max((v["total_booked"] for v in by_staff.values()), default=1) or 1
-
-    # 前週の sellout_rate を取得（トレンド用）
-    prev_week_start = week_start - timedelta(days=7)
-    prev_rates = {}
-    prev_rows = conn.execute("""
-        SELECT staff_no, sellout_rate FROM weekly_summaries
-        WHERE week_start = ?
-    """, (prev_week_start.isoformat(),)).fetchall()
-    prev_rates = {r["staff_no"]: r["sellout_rate"] for r in prev_rows}
-
     inserted = 0
     for no, d in by_staff.items():
         sellout = (round(d["total_booked"] / d["total_capacity"] * 100, 1)
                    if d["total_capacity"] > 0 else 0.0)
-        trend = sellout - prev_rates.get(no, sellout)
         score = calc_score(
             sellout_rate=sellout,
-            working_days=d["working_days"],
-            booked_slots=d["total_booked"],
-            trend=trend,
-            max_booked=max_booked,
+            booked=d["total_booked"],
         )
 
         conn.execute("""

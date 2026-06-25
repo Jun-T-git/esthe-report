@@ -183,14 +183,11 @@ def get_monthly_scores(n_weeks: int = 4) -> list:
     """, params).fetchall()
     conn.close()
 
-    max_booked = max((r["total_booked"] for r in rows), default=1) or 1
     result = []
     for r in rows:
         score = calc_score(
             sellout_rate=r["avg_sellout"],
-            working_days=min(r["weeks_appeared"] * 5, 7),
-            booked_slots=r["total_booked"],
-            max_booked=max_booked,
+            booked=r["total_booked"],
         )
         result.append({
             "staff_name": r["staff_name"],
@@ -397,9 +394,10 @@ def generate_free(ctx: dict) -> str:
     lines += [
         "---",
         "",
-        "## 🏆 週間総合ランキング TOP15",
+        "## 🏆 週間総合ランキング TOP15（予約困難度スコア）",
         "",
-        "完売率・出勤頻度・完売数・週次トレンドを加重合成した独自スコアによるランキングです。",
+        "「完売率（70%）」と「完売数の対数（30%）」を合成した独自スコアによるランキング。",
+        "アクセス困難さ（率の高さ）と需要の強さ（絶対数の多さ）を同時に評価します。",
         "**11〜15位のみ全項目公開**、それ以外は名前をマスクしています。",
         "",
         "| 順位 | セラピスト | スコア | 完売率 | 完売数 | 出勤枠数 | 週次変化 |",
@@ -576,7 +574,9 @@ def generate_paid(ctx: dict) -> str:
         "",
         "---",
         "",
-        "## 🏆 週間総合ランキング",
+        "## 🏆 週間総合ランキング（予約困難度スコア）",
+        "",
+        "スコア = 完売率(70%) + 完売数の対数(30%)。週次変化は完売率の前週比（補助情報）。",
         "",
         "| 順位 | セラピスト | スコア | 完売率 | 完売数 | 出勤枠数 | 週次変化 |",
         "|------|-----------|--------|--------|-------|------------|---------|",

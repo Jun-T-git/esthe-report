@@ -1,44 +1,30 @@
 """
 独自スコアリングエンジン
-複数指標を組み合わせた「人気スコア」を算出する
+「予約困難度」= アクセス困難 (完売率主軸) + 需要強度 (完売数の対数加点)
 
 スコア設計:
-  完売率        40% — 需要の強さ（最も直接的な人気指標）
-  出勤頻度      20% — 継続的な人気（稼働率が高い = 指名が途切れない）
-  予約絶対数    20% — ボリューム（口コミ量との相関が強い）
-  トレンド補正  20% — 直近のモメンタム（上昇中 vs 下降中）
+  完売率       70% — どれだけ即時アクセス困難か (主軸)
+  完売数(log) 30% — どれだけ多くの客が予約しているか (需要強度)
 
-トレンド補正は前週との比較でのみ有効になる。
-初回は0として扱い、週ごとに精度が上がる設計。
+CAP=196 は実データの過去最大値。これを「事実上の満点完売数」とする。
+出勤頻度・トレンドは本体スコアからは外し、補助情報として記事側で表示する。
 
-データソース: weekly_summaries（aggregate.py が計算した集計層）
+データソース: weekly_summaries (aggregate.py が計算した集計層)
 """
 
+import math
 from datetime import date, timedelta
 from db import get_conn
 
 
-def calc_score(
-    sellout_rate: float,     # 0〜100+
-    working_days: int,       # 0〜7
-    booked_slots: int,       # 絶対数
-    trend: float = 0.0,      # 前週比（完売率の差分、-100〜+100）
-    max_booked: int = 1,     # 正規化用（同スナップショット内の最大値）
-) -> float:
-    """0〜100のスコアを返す"""
-    s_sellout = min(sellout_rate, 100) / 100
-    s_freq    = min(working_days, 7) / 7
-    s_volume  = min(booked_slots, max_booked) / max_booked if max_booked > 0 else 0
-    s_trend   = (min(max(trend, -30), 30) + 30) / 60  # -30〜+30 → 0〜1
+CAP = 196
 
-    score = (
-        s_sellout * 0.40 +
-        s_freq    * 0.20 +
-        s_volume  * 0.20 +
-        s_trend   * 0.20
-    ) * 100
 
-    return round(score, 1)
+def calc_score(sellout_rate: float, booked: int) -> float:
+    """予約困難度スコアを 0〜100 で返す。"""
+    access = min(max(sellout_rate, 0), 100) / 100
+    demand = min(math.log(1 + max(booked, 0)) / math.log(1 + CAP), 1.0)
+    return round((0.7 * access + 0.3 * demand) * 100, 1)
 
 
 def score_snapshot(week_start: str, reference_date: str) -> list:
@@ -56,7 +42,7 @@ def score_snapshot(week_start: str, reference_date: str) -> list:
         conn.close()
         return []
 
-    # 前週の sellout_rate（トレンド差分用）
+    # 前週の sellout_rate（補助情報「週次変化」用）
     prev_ws = (date.fromisoformat(week_start) - timedelta(days=7)).isoformat()
     prev_rows = conn.execute("""
         SELECT staff_no, sellout_rate
@@ -79,8 +65,8 @@ def score_snapshot(week_start: str, reference_date: str) -> list:
             "score": r["score"],
             "sellout_rate": r["sellout_rate"],
             "working_days": r["working_days"],
-            "booked_slots": r["total_booked"],         # 完売数
-            "capacity": r["total_capacity"],           # 出勤枠数
+            "booked_slots": r["total_booked"],
+            "capacity": r["total_capacity"],
             "trend": round(trend, 1),
         })
 
